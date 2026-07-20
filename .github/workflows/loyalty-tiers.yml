@@ -1,0 +1,29 @@
+name: Update Loyalty Tiers
+
+on:
+  schedule:
+    - cron: '0 20 * * 0'  # Every Sunday 8am NZT (UTC+12 = 20:00 UTC Saturday)
+  workflow_dispatch:       # Also allows manual run from GitHub
+
+jobs:
+  update-tiers:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run loyalty tier script
+        env:
+          SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
+          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+        run: python loyalty_tiers.py
