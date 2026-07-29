@@ -34,7 +34,7 @@ def make_request(method, url, **kwargs):
             response = requests.post(url, headers=headers, **kwargs)
 
         if response.status_code == 429:
-            retry_after = int(response.headers.get("Retry-After", 2))
+            retry_after = int(float(response.headers.get("Retry-After", 2)))
             print(f"Rate limited, waiting {retry_after}s...")
             time.sleep(retry_after)
             continue
