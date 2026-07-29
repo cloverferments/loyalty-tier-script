@@ -12,8 +12,6 @@ PLATINUM_THRESHOLD = 1500
 GOLD_THRESHOLD = 1000
 TIER_TAGS = ["loyalty-silver", "loyalty-gold", "loyalty-platinum"]
 
-spend_cache = {}
-
 
 def get_headers():
     return {
@@ -23,7 +21,6 @@ def get_headers():
 
 
 def make_request(method, url, **kwargs):
-    """Make a request with rate limit handling."""
     headers = get_headers()
     for attempt in range(5):
         if method == "get":
@@ -67,16 +64,32 @@ def get_all_customers():
 
 def get_customer_spend_last_12_months(customer_id):
     twelve_months_ago = (datetime.now(timezone.utc) - timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    orders = []
-    url = f"{BASE_URL}/customers/{customer_id}/orders.json?status=any&limit=250&created_at_min={twelve_months_ago}"
+    
+    total = 0.0
+    order_count = 0
+    
+    # Use orders endpoint with date filter and pagination
+    url = f"{BASE_URL}/orders.json?customer_id={customer_id}&status=any&limit=250&created_at_min={twelve_months_ago}&financial_status=paid"
 
     while url:
         response = make_request("get", url)
         if response.status_code != 200:
-            return 0
-        data = response.json()
-        orders.extend(data.get("orders", []))
+            # Fall back to customer orders endpoint
+            url2 = f"{BASE_URL}/customers/{customer_id}/orders.json?status=any&limit=250&created_at_min={twelve_months_ago}"
+            response = make_request("get", url2)
+            if response.status_code != 200:
+                return 0
+            orders = response.json().get("orders", [])
+            for order in orders:
+                if order.get("financial_status") in ["paid", "partially_refunded"]:
+                    total += float(order.get("total_price", 0))
+                    order_count += 1
+            return total
+
+        orders = response.json().get("orders", [])
+        for order in orders:
+            total += float(order.get("total_price", 0))
+            order_count += 1
 
         link_header = response.headers.get("Link", "")
         url = None
@@ -84,9 +97,9 @@ def get_customer_spend_last_12_months(customer_id):
             for part in link_header.split(","):
                 if 'rel="next"' in part:
                     url = part.split(";")[0].strip().strip("<>")
+        
+        time.sleep(0.3)
 
-    total = sum(float(order.get("total_price", 0)) for order in orders
-                if order.get("financial_status") in ["paid", "partially_refunded"])
     return total
 
 
@@ -110,7 +123,6 @@ def update_customer_tags(customer_id, current_tags, new_tier, spend):
     response = make_request("put", url, json=payload)
 
     if response.status_code == 200:
-        # Update loyalty points metafield
         metafield_url = f"{BASE_URL}/customers/{customer_id}/metafields.json"
         metafield_payload = {
             "metafield": {
@@ -127,7 +139,6 @@ def update_customer_tags(customer_id, current_tags, new_tier, spend):
 
 
 def main():
-    # Test connection
     test_response = make_request("get", f"{BASE_URL}/shop.json")
     if test_response.status_code != 200:
         print(f"ERROR: Could not connect. Status: {test_response.status_code}")
@@ -160,7 +171,6 @@ def main():
             errors += 1
             print(f"✗ Failed to update {email}")
 
-        # Progress update every 100 customers
         if (i + 1) % 100 == 0:
             print(f"Progress: {i + 1}/{len(customers)} — Updated: {updated}, Errors: {errors}, Skipped: {skipped}")
 
