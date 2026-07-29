@@ -62,34 +62,34 @@ def get_all_customers():
     return customers
 
 
-def get_customer_spend_last_12_months(customer_id):
+def get_customer_spend_last_12_months(customer_id, email):
     twelve_months_ago = (datetime.now(timezone.utc) - timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ")
     
     total = 0.0
     order_count = 0
+    page_count = 0
     
-    # Use orders endpoint with date filter and pagination
-    url = f"{BASE_URL}/orders.json?customer_id={customer_id}&status=any&limit=250&created_at_min={twelve_months_ago}&financial_status=paid"
+    url = f"{BASE_URL}/orders.json?customer_id={customer_id}&status=any&limit=250&created_at_min={twelve_months_ago}"
 
     while url:
         response = make_request("get", url)
         if response.status_code != 200:
-            # Fall back to customer orders endpoint
-            url2 = f"{BASE_URL}/customers/{customer_id}/orders.json?status=any&limit=250&created_at_min={twelve_months_ago}"
-            response = make_request("get", url2)
-            if response.status_code != 200:
-                return 0
-            orders = response.json().get("orders", [])
-            for order in orders:
-                if order.get("financial_status") in ["paid", "partially_refunded"]:
-                    total += float(order.get("total_price", 0))
-                    order_count += 1
-            return total
+            print(f"  ERROR fetching orders for {email}: status {response.status_code}")
+            return 0
 
         orders = response.json().get("orders", [])
+        page_count += 1
+        
         for order in orders:
-            total += float(order.get("total_price", 0))
-            order_count += 1
+            financial_status = order.get("financial_status", "")
+            order_total = float(order.get("total_price", 0))
+            order_id = order.get("name", "?")
+            
+            if financial_status in ["paid", "partially_refunded"]:
+                total += order_total
+                order_count += 1
+            else:
+                print(f"  SKIPPED order {order_id} for {email}: status={financial_status}, total=${order_total}")
 
         link_header = response.headers.get("Link", "")
         url = None
@@ -100,6 +100,9 @@ def get_customer_spend_last_12_months(customer_id):
         
         time.sleep(0.3)
 
+    if order_count > 0 or page_count > 0:
+        print(f"  {email}: {order_count} orders across {page_count} pages = ${total:.2f}")
+    
     return total
 
 
@@ -155,7 +158,7 @@ def main():
         current_tags = customer.get("tags", "")
         email = customer.get("email", "unknown")
 
-        spend = get_customer_spend_last_12_months(customer_id)
+        spend = get_customer_spend_last_12_months(customer_id, email)
         new_tier = calculate_tier(spend)
 
         current_tier_tags = [t.strip() for t in current_tags.split(",") if t.strip() in TIER_TAGS]
