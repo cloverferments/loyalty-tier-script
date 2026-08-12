@@ -45,7 +45,7 @@ def calculate_spend_from_csv():
     customer_spend = defaultdict(float)
     seen_orders = set()  # Deduplicate by order name
 
-    with open(CSV_FILE, "r", encoding="utf-8-sig") as f:
+    with open(CSV_FILE, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             order_name = row.get("Name", "").strip()
@@ -167,7 +167,7 @@ def main():
     for i, customer in enumerate(customers):
         customer_id = customer["id"]
         current_tags = customer.get("tags", "")
-        email = customer.get("email", "").lower()
+        email = (customer.get("email") or "").lower()
 
         spend = customer_spend.get(email, 0.0)
         new_tier = calculate_tier(spend)
