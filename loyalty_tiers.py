@@ -12,7 +12,7 @@ PLATINUM_THRESHOLD = 1500
 GOLD_THRESHOLD = 1000
 TIER_TAGS = ["loyalty-silver", "loyalty-gold", "loyalty-platinum"]
 CSV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "orders.csv")
-TEST_MODE = True  # Set to False to process all customers
+TEST_MODE = False  # Set to False to process all customers
 
 
 def get_headers():
