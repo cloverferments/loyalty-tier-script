@@ -12,7 +12,7 @@ REST_URL = f"https://{STORE}.myshopify.com/admin/api/2026-07"
 PLATINUM_THRESHOLD = 1500
 GOLD_THRESHOLD = 1000
 TIER_TAGS = ["loyalty-silver", "loyalty-gold", "loyalty-platinum"]
-CSV_FILE = "orders.csv"
+CSV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "orders.csv")
 
 
 def get_headers():
