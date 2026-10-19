@@ -395,37 +395,52 @@
     reader.readAsText(file);
   }
 
-  function parseCSVLine(line) {
-    const cols = [];
-    let current = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      if (line[i] === '"') { inQuotes = !inQuotes; }
-      else if (line[i] === ',' && !inQuotes) { cols.push(current); current = ''; }
-      else { current += line[i]; }
+  // Full CSV parser: handles quoted fields containing commas, line breaks and "" escapes.
+  function parseCSVRows(text) {
+    const rows = [];
+    let row = [], field = '', inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') { field += '"'; i++; }
+          else inQuotes = false;
+        } else field += ch;
+      } else if (ch === '"') inQuotes = true;
+      else if (ch === ',') { row.push(field); field = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && text[i + 1] === '\n') i++;
+        row.push(field); rows.push(row); row = []; field = '';
+      } else field += ch;
     }
-    cols.push(current);
-    return cols;
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    return rows;
   }
+
+  const REQUIRED_COLUMNS = ['Name', 'Email', 'Financial Status', 'Total', 'Paid at'];
 
   function parseCSV(text) {
     const customerSpend = {};
     const seenOrders = new Set();
-    const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-    const headers = parseCSVLine(lines[0]);
+    const rows = parseCSVRows(text.replace(/^\uFEFF/, ''));
+    const headers = (rows[0] || []).map(h => h.trim());
+    const missing = REQUIRED_COLUMNS.filter(c => !headers.includes(c));
+    if (missing.length) {
+      throw new Error(`This doesn't look like a Shopify orders export — missing column(s): ${missing.join(', ')}. Export from Orders → Export, not Customers.`);
+    }
     const nameIdx = headers.indexOf('Name');
     const emailIdx = headers.indexOf('Email');
     const statusIdx = headers.indexOf('Financial Status');
     const totalIdx = headers.indexOf('Total');
     const paidIdx = headers.indexOf('Paid at');
 
-    for (let i = 1; i < lines.length; i++) {
-      if (!lines[i].trim()) continue;
-      const cols = parseCSVLine(lines[i]);
+    for (let i = 1; i < rows.length; i++) {
+      const cols = rows[i];
+      if (!cols || cols.every(c => !c.trim())) continue;
       const orderName = (cols[nameIdx] || '').trim();
       const email = (cols[emailIdx] || '').trim().toLowerCase();
       const status = (cols[statusIdx] || '').trim().toLowerCase();
-      const total = parseFloat(cols[totalIdx] || '0');
+      const total = parseFloat((cols[totalIdx] || '0').replace(/[^0-9.\-]/g, ''));
       const paidAt = (cols[paidIdx] || '').trim();
 
       if (!email || !orderName || seenOrders.has(orderName)) continue;
