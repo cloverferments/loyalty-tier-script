@@ -283,14 +283,15 @@
       <div class="step">
         <div class="step-num">2</div>
         <div>
-          <p>Upload the CSV and enter your access token</p>
-          <small>Token starts with shpat_ — ask Hailey if you don't have it</small>
+          <p>Upload the CSV and enter the team password</p>
+          <small>Ask Hailey if you don't have the password</small>
         </div>
       </div>
       <div class="step">
         <div class="step-num">3</div>
         <div>
           <p>Click Run — Shopify tags update automatically</p>
+          <small>Keep this page open until it says Complete (a full run takes ~30 min)</small>
         </div>
       </div>
     </div>
@@ -309,9 +310,8 @@
     <div class="file-info" id="fileInfo">✓ <span id="fileName"></span></div>
 
     <div class="field">
-      <label>Shopify Access Token</label>
-      <input type="password" id="tokenInput" placeholder="shpat_xxxxxxxxxxxx">
-      
+      <label>Team password</label>
+      <input type="password" id="tokenInput" placeholder="Team password" autocomplete="current-password">
     </div>
 
     <div class="mode-toggle">
@@ -358,7 +358,7 @@
   let csvData = null;
   let mode = 'full';
 
-  const STORE = 'cloverferments';
+  const WORKER = 'https://loyalty-proxy.kitchen-2a8.workers.dev';
   const PLATINUM = 1500;
   const GOLD = 1000;
   const TIER_TAGS = ['loyalty-silver', 'loyalty-gold', 'loyalty-platinum'];
@@ -459,46 +459,41 @@
     document.getElementById('progressText').textContent = `${current} of ${total} customers processed`;
   }
 
-  async function shopifyGet(token, url) {
-    const res = await fetch(`https://${STORE}.myshopify.com${url}`, {
-      headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' }
-    });
-    if (res.status === 429) {
-      await new Promise(r => setTimeout(r, parseInt(res.headers.get('Retry-After') || '2') * 1000));
-      return shopifyGet(token, url);
+  async function shopifyRequest(token, method, url, body) {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const res = await fetch(`${WORKER}/shopify${url}`, {
+        method,
+        headers: { 'X-Team-Password': token, 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      if (res.status === 429) {
+        await new Promise(r => setTimeout(r, parseInt(res.headers.get('Retry-After') || '2') * 1000));
+        continue;
+      }
+      if (res.status === 401) throw new Error('Wrong team password');
+      return res.json();
     }
-    return res.json();
+    throw new Error('Shopify kept rate-limiting — try again in a few minutes');
   }
+  const shopifyGet = (token, url) => shopifyRequest(token, 'GET', url);
+  const shopifyPut = (token, url, body) => shopifyRequest(token, 'PUT', url, body);
+  const shopifyPost = (token, url, body) => shopifyRequest(token, 'POST', url, body);
 
-  async function shopifyPut(token, url, body) {
-    const res = await fetch(`https://${STORE}.myshopify.com${url}`, {
-      method: 'PUT',
-      headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    if (res.status === 429) {
-      await new Promise(r => setTimeout(r, parseInt(res.headers.get('Retry-After') || '2') * 1000));
-      return shopifyPut(token, url, body);
+  async function checkConnection(token) {
+    let res;
+    try {
+      res = await fetch(`${WORKER}/ping`, { headers: { 'X-Team-Password': token } });
+    } catch (e) {
+      throw new Error('Could not reach the loyalty server — check your internet and try again');
     }
-    return res.json();
-  }
-
-  async function shopifyPost(token, url, body) {
-    const res = await fetch(`https://${STORE}.myshopify.com${url}`, {
-      method: 'POST',
-      headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    if (res.status === 429) {
-      await new Promise(r => setTimeout(r, parseInt(res.headers.get('Retry-After') || '2') * 1000));
-      return shopifyPost(token, url, body);
-    }
-    return res.json();
+    if (res.status === 401) throw new Error('Wrong team password');
+    const shop = await shopifyGet(token, '/admin/api/2026-07/shop.json');
+    if (!shop.shop) throw new Error('Connected, but Shopify refused — the Shopify token in Cloudflare may be wrong');
   }
 
   async function getAllCustomers(token) {
     const customers = [];
-    let url = '/admin/api/2026-07/customers.json?limit=250';
+    let url = '/admin/api/2026-07/customers.json?limit=250&since_id=0';
     while (url) {
       const data = await shopifyGet(token, url);
       const batch = data.customers || [];
@@ -517,12 +512,31 @@
 
   async function startRun() {
     const token = document.getElementById('tokenInput').value.trim();
-    if (!token) { alert('Please enter your Shopify access token.'); return; }
+    if (!token) { alert('Please enter the team password.'); return; }
     if (!csvData) { alert('Please upload a CSV file.'); return; }
 
     document.getElementById('runBtn').disabled = true;
     document.getElementById('progressCard').classList.add('visible');
     document.getElementById('log').innerHTML = '';
+
+    try {
+      await runUpdate(token);
+    } catch (e) {
+      log(`✗ ${e.message}`, 'error');
+      document.getElementById('progressText').textContent = `Stopped — ${e.message}`;
+    }
+    document.getElementById('runBtn').disabled = false;
+    document.getElementById('runBtn').textContent = 'Run again';
+  }
+
+  window.addEventListener('beforeunload', e => {
+    if (document.getElementById('runBtn').disabled && csvData) { e.preventDefault(); e.returnValue = ''; }
+  });
+
+  async function runUpdate(token) {
+    log('Connecting...', 'info');
+    await checkConnection(token);
+    log('✓ Connected to Shopify', 'success');
 
     log('Parsing CSV...', 'info');
     const { customerSpend, orderCount } = parseCSV(csvData);
@@ -590,8 +604,6 @@
 
     log(`Done — Updated: ${updated} · Skipped: ${skipped} · Errors: ${errors}`, 'success');
     document.getElementById('progressText').textContent = `Complete — ${updated} updated, ${skipped} skipped, ${errors} errors`;
-    document.getElementById('runBtn').disabled = false;
-    document.getElementById('runBtn').textContent = 'Run again';
   }
 </script>
 </body>
