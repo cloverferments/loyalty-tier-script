@@ -470,10 +470,14 @@
         await new Promise(r => setTimeout(r, parseInt(res.headers.get('Retry-After') || '2') * 1000));
         continue;
       }
-      if (res.status === 401) throw new Error('Wrong team password');
+      if (res.status === 401) throw new Error(await authError(res));
+      if (res.status === 502 || res.status === 503) throw new Error(await authError(res));
       return res.json();
     }
     throw new Error('Shopify kept rate-limiting — try again in a few minutes');
+  }
+  async function authError(res) {
+    try { return (await res.json()).error || `Error ${res.status}`; } catch (e) { return `Error ${res.status}`; }
   }
   const shopifyGet = (token, url) => shopifyRequest(token, 'GET', url);
   const shopifyPut = (token, url, body) => shopifyRequest(token, 'PUT', url, body);
@@ -486,7 +490,7 @@
     } catch (e) {
       throw new Error('Could not reach the loyalty server — check your internet and try again');
     }
-    if (res.status === 401) throw new Error('Wrong team password');
+    if (res.status === 401) throw new Error(await authError(res));
     const shop = await shopifyGet(token, '/admin/api/2026-07/shop.json');
     if (!shop.shop) throw new Error('Connected, but Shopify refused — the Shopify token in Cloudflare may be wrong');
   }
