@@ -277,7 +277,7 @@
         <div class="step-num">1</div>
         <div>
           <p>Export orders from Shopify Admin</p>
-          <small>Orders → Export → Last 12 months → CSV for Excel</small>
+          <small>Orders → Export → Last 12 months. If Shopify emails several files, upload all of them at once.</small>
         </div>
       </div>
       <div class="step">
@@ -303,8 +303,9 @@
     <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
       <div class="icon">📄</div>
       <p><strong>Drop your orders CSV here</strong></p>
+      <p style="margin-top:4px;font-size:12px">If Shopify sent it in several parts, select them all together</p>
       <p style="margin-top:4px">or click to browse</p>
-      <input type="file" id="fileInput" accept=".csv">
+      <input type="file" id="fileInput" accept=".csv" multiple>
     </div>
 
     <div class="file-info" id="fileInfo">✓ <span id="fileName"></span></div>
@@ -377,22 +378,22 @@
   dropZone.addEventListener('drop', e => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
-    handleFile(e.dataTransfer.files[0]);
+    handleFiles(e.dataTransfer.files);
   });
-  fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
+  fileInput.addEventListener('change', e => handleFiles(e.target.files));
 
-  function handleFile(file) {
-    if (!file || !file.name.endsWith('.csv')) { alert('Please upload a CSV file.'); return; }
-    const reader = new FileReader();
-    reader.onload = e => {
-      csvData = e.target.result;
-      dropZone.classList.add('file-loaded');
-      document.getElementById('fileInfo').classList.add('visible');
-      document.getElementById('fileName').textContent = file.name;
-      document.getElementById('runBtn').disabled = false;
-      document.getElementById('runBtn').textContent = 'Run loyalty tier update';
-    };
-    reader.readAsText(file);
+  async function handleFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    if (files.some(f => !f.name.toLowerCase().endsWith('.csv'))) { alert('Please upload CSV files only.'); return; }
+    csvData = await Promise.all(files.map(f => f.text()));
+    dropZone.classList.add('file-loaded');
+    document.getElementById('fileInfo').classList.add('visible');
+    document.getElementById('fileName').textContent = files.length === 1
+      ? files[0].name
+      : `${files.length} files: ${files.map(f => f.name).join(', ')}`;
+    document.getElementById('runBtn').disabled = false;
+    document.getElementById('runBtn').textContent = 'Run loyalty tier update';
   }
 
   // Full CSV parser: handles quoted fields containing commas, line breaks and "" escapes.
@@ -419,9 +420,14 @@
 
   const REQUIRED_COLUMNS = ['Name', 'Email', 'Financial Status', 'Total', 'Paid at'];
 
-  function parseCSV(text) {
+  function parseCSV(texts) {
     const customerSpend = {};
     const seenOrders = new Set();
+    for (const text of [].concat(texts)) parseOneCSV(text, customerSpend, seenOrders);
+    return { customerSpend, orderCount: seenOrders.size };
+  }
+
+  function parseOneCSV(text, customerSpend, seenOrders) {
     const rows = parseCSVRows(text.replace(/^\uFEFF/, ''));
     const headers = (rows[0] || []).map(h => h.trim());
     const missing = REQUIRED_COLUMNS.filter(c => !headers.includes(c));
@@ -450,7 +456,6 @@
       seenOrders.add(orderName);
       customerSpend[email] = (customerSpend[email] || 0) + total;
     }
-    return { customerSpend, orderCount: seenOrders.size };
   }
 
   function calculateTier(spend) {
