@@ -316,6 +316,17 @@
 
       <div class="field-row">
         <div class="field">
+          <label>Gift product ID</label>
+          <input id="giftProduct" value="15406933836089">
+        </div>
+        <div class="field">
+          <label>Gift name</label>
+          <input id="giftName" value="Loyalty Gift - Cola">
+        </div>
+      </div>
+      <small style="display:block;margin:-8px 0 4px;font-size:12px;color:#aaa">The product ID is the number at the end of the product's URL in Shopify admin</small>
+      <div class="field-row">
+        <div class="field">
           <label>Gold variant ID</label>
           <input id="goldVariant" value="67712747340089">
         </div>
@@ -961,17 +972,18 @@
     if (!pingData.recharge) throw new Error('The Recharge key is not set up in Cloudflare yet (RECHARGE_TOKEN)');
     glog('✓ Connected', 'success');
 
-    // Check the gift variants exist and get their product IDs
+    // Gift product details (typed in — the Shopify app doesn't need product access)
+    const productId = document.getElementById('giftProduct').value.trim();
+    const productTitle = document.getElementById('giftName').value.trim() || 'Loyalty gift';
+    if (!/^\d+$/.test(productId)) throw new Error('Check the gift product ID — numbers only');
     for (const [tag, c] of Object.entries(cfg)) {
-      const { data } = await workerCall(pw, 'shopify', 'GET', `/admin/api/${API_V}/variants/${c.variant}.json`).catch(e => {
-        throw new Error(`Couldn't find the ${tag.replace('loyalty-', '')} variant ${c.variant} in Shopify (${e.message})`);
-      });
-      const v = data.variant;
-      const { data: pd } = await workerCall(pw, 'shopify', 'GET', `/admin/api/${API_V}/products/${v.product_id}.json`);
-      c.productId = v.product_id;
-      c.productTitle = pd.product ? pd.product.title : 'Loyalty gift';
-      c.variantTitle = v.title;
-      glog(`✓ ${tag.replace('loyalty-', '')} gift: ${c.productTitle} / ${v.title} × ${c.qty}`, 'success');
+      c.productId = productId;
+      c.productTitle = productTitle;
+      c.variantTitle = tag === 'loyalty-platinum' ? 'Platinum' : 'Gold';
+      glog(`✓ ${c.variantTitle} gift: ${productTitle} (variant ${c.variant}) × ${c.qty}`, 'success');
+    }
+    if (cfg['loyalty-gold'].variant === cfg['loyalty-platinum'].variant) {
+      glog('! Gold and Platinum have the same variant ID — double-check that\'s intended', 'error');
     }
 
     // Who's eligible
