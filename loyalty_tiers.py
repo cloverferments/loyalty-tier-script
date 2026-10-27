@@ -23,9 +23,23 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-STORE = os.environ["SHOPIFY_STORE"].strip()
+def _store_name(raw):
+    """Accepts 'cloverferments', 'cloverferments.myshopify.com' or a full admin URL."""
+    s = (raw or "").strip().lower()
+    for prefix in ("https://", "http://"):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+    if s.startswith("admin.shopify.com/store/"):
+        s = s[len("admin.shopify.com/store/"):]
+    s = s.split("/")[0]
+    if s.endswith(".myshopify.com"):
+        s = s[: -len(".myshopify.com")]
+    return s
+
+
+STORE = _store_name(os.environ.get("SHOPIFY_STORE", ""))
 CLIENT_ID = os.environ.get("SHOPIFY_CLIENT_ID", "").strip()
-CLIENT_SECRET = os.environ["SHOPIFY_CLIENT_SECRET"].strip()
+CLIENT_SECRET = os.environ.get("SHOPIFY_CLIENT_SECRET", "").strip()
 DRY_RUN = os.environ.get("DRY_RUN", "false").strip().lower() in ("1", "true", "yes")
 
 API_VERSION = "2026-07"
@@ -288,7 +302,18 @@ def main():
 
 if __name__ == "__main__":
     try:
+        if not STORE:
+            raise SystemExit("ERROR: The SHOPIFY_STORE secret is missing in GitHub (Settings → Secrets and variables → Actions).")
+        if not CLIENT_SECRET:
+            raise SystemExit("ERROR: The SHOPIFY_CLIENT_SECRET secret is missing in GitHub (Settings → Secrets and variables → Actions).")
         main()
+    except SystemExit as e:
+        if e.code not in (0, None):
+            summary(f"\n**❌ Stopped:** {e.code}")
+        raise
+    except Exception as e:
+        summary(f"\n**❌ Stopped:** {type(e).__name__}: {str(e)[:500]}")
+        raise
     finally:
         path = os.environ.get("GITHUB_STEP_SUMMARY")
         if path and summary_lines:
