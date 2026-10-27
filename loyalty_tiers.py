@@ -166,11 +166,31 @@ def run_bulk_query(inner_query, label):
             log(f"  {label} export ready ({op['objectCount']} rows)")
             if not op["url"]:
                 return []
-            text = request("GET", op["url"]).text
-            return [json.loads(line) for line in text.splitlines() if line.strip()]
+            return download_jsonl(op["url"], label)
         if op["status"] in ("FAILED", "CANCELED", "EXPIRED"):
             raise RuntimeError(f"{label} export {op['status']} ({op.get('errorCode')})")
     raise RuntimeError(f"{label} export took too long")
+
+
+def download_jsonl(url, label):
+    """The export is a file link on Shopify's storage — fetch it WITHOUT the Shopify login headers."""
+    for attempt in range(5):
+        r = requests.get(url, timeout=300)
+        if r.ok:
+            break
+        time.sleep(3 + attempt * 3)
+    if not r.ok:
+        raise RuntimeError(f"Couldn't download the {label} export (HTTP {r.status_code}): {describe(r)}")
+    rows = []
+    for n, line in enumerate(r.text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            raise RuntimeError(f"The {label} export file wasn't in the expected format (line {n}): {line[:120]}")
+    log(f"  {label} export downloaded ({len(rows)} rows)")
+    return rows
 
 
 def twelve_month_spend():
