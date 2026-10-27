@@ -79,10 +79,36 @@ def get_access_token():
             headers={"Accept": "application/json"},
             timeout=30,
         )
-        if r.ok and r.json().get("access_token"):
-            return r.json()["access_token"]
-        log(f"Client ID/secret exchange didn't work ({r.status_code}) — trying the secret as an access token")
+        data = safe_json(r)
+        if r.ok and data.get("access_token"):
+            log("✓ Logged in with Client ID + secret")
+            return data["access_token"]
+        raise SystemExit(
+            f"ERROR: Shopify login failed (HTTP {r.status_code}). The SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET "
+            f"secrets in GitHub probably don't match the app's current Client ID and secret (the ones in Cloudflare). "
+            f"Shopify replied: {describe(r)}"
+        )
     return CLIENT_SECRET
+
+
+def safe_json(r):
+    try:
+        return r.json()
+    except ValueError:
+        return {}
+
+
+def describe(r):
+    """Short, secret-free description of an unexpected Shopify reply."""
+    ctype = r.headers.get("Content-Type", "")
+    text = (r.text or "").strip().replace("\n", " ")
+    if "html" in ctype or text.startswith("<"):
+        title = ""
+        low = text.lower()
+        if "<title>" in low:
+            title = text[low.index("<title>") + 7: low.index("</title>")] if "</title>" in low else ""
+        return f"a web page instead of data ({title.strip()[:80] or 'no title'}) — url {r.url.split('?')[0]}"
+    return text[:200] or "(empty reply)"
 
 
 def request(method, url, **kwargs):
@@ -102,8 +128,9 @@ def graphql(query, variables=None):
         r = request("POST", GRAPHQL, json={"query": query, "variables": variables or {}})
         if r.status_code in (401, 403):
             raise SystemExit(f"ERROR: Shopify refused access ({r.status_code}). Check the app's permissions and the GitHub secrets.\n{r.text[:300]}")
-        r.raise_for_status()
-        data = r.json()
+        data = safe_json(r)
+        if not r.ok or not data:
+            raise RuntimeError(f"Shopify GraphQL request failed (HTTP {r.status_code}): {describe(r)}")
         errors = data.get("errors")
         if errors:
             if any((e.get("extensions") or {}).get("code") == "THROTTLED" for e in errors):
@@ -238,9 +265,10 @@ def main():
     token = get_access_token()
     session.headers.update({"X-Shopify-Access-Token": token, "Content-Type": "application/json"})
     shop = request("GET", f"{REST}/shop.json")
-    if not shop.ok:
-        raise SystemExit(f"ERROR: Could not connect to Shopify ({shop.status_code}). Check the GitHub secrets.\n{shop.text[:300]}")
-    log(f"✓ Connected to {shop.json()['shop']['name']}")
+    shop_data = safe_json(shop)
+    if not shop.ok or "shop" not in shop_data:
+        raise SystemExit(f"ERROR: Could not connect to Shopify store '{STORE}' (HTTP {shop.status_code}). Shopify replied: {describe(shop)}")
+    log(f"✓ Connected to {shop_data['shop']['name']}")
 
     log("\nReading 12 months of orders...")
     spend = twelve_month_spend()
