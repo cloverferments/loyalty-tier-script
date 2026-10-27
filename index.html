@@ -291,6 +291,30 @@
   }
   .gift-thumb:empty { background: #FEF5F7 center / 24px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23E8C5CF' stroke-width='1.5'%3E%3Crect x='3' y='8' width='18' height='13' rx='1'/%3E%3Cpath d='M12 8v13M3 12h18M12 8c-2-4-6-4-6-1s6 1 6 1c0 0 6 2 6-1s-4-3-6 1'/%3E%3C/svg%3E"); }
   .gift-thumb img { width: 100%; height: 100%; object-fit: contain; background: #fff; display: block; }
+  .tier-intro { font-size: 14px; line-height: 1.6; color: #555; }
+  .tier-run-buttons { display: flex; gap: 10px; margin-top: 20px; }
+  .tier-run-buttons .run-btn { margin-top: 0; }
+  .tier-run-buttons .secondary { flex: 0 0 36%; }
+  .tier-status { margin-top: 20px; padding: 16px; border: 1px solid #F0E8EC; border-radius: 4px; font-size: 14px; line-height: 1.6; }
+  .tier-status .muted, .tier-freshness .muted { color: #aaa; }
+  .tier-status .headline { font-size: 15px; margin-bottom: 8px; }
+  .tier-status .ok { color: #2E7D4F; }
+  .tier-status .bad { color: #C0392B; }
+  .tier-status .tier-summary { margin: 12px 0; }
+  .tier-status .tier-box .count { font-size: 24px; }
+  .tier-status table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  .tier-status th, .tier-status td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #F0E8EC; }
+  .tier-status td.num { text-align: right; white-space: nowrap; }
+  .tier-status details summary { cursor: pointer; margin-top: 8px; }
+  .tier-status a { color: #1A1A1A; }
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #E8C5CF; border-top-color: #1A1A1A; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -1px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  details.backup { margin-top: 8px; }
+  details.backup > summary { cursor: pointer; font-size: 13px; color: #777; padding: 12px 4px; }
+  .tier-freshness { background: #fff; border-radius: 4px; padding: 14px 20px; margin-bottom: 16px; font-size: 13px; color: #555; }
+  .tier-freshness.stale { border-left: 3px solid #E0A030; }
+  .tier-freshness a { color: #1A1A1A; cursor: pointer; }
+  @media (max-width: 520px) { .tier-run-buttons { flex-direction: column; } .tier-status .tier-summary { grid-template-columns: repeat(3, 1fr); } }
   .round-status { margin-top: 8px; font-size: 12px; color: #555; }
   .round-help { display: block; margin-top: 6px; font-size: 12px; color: #aaa; line-height: 1.5; }
   .manual-ids summary { cursor: pointer; }
@@ -330,11 +354,13 @@
           <small>Everyone else (no subscription, or next order after the last order date) goes on a manual list you can download. Run it weekly during the round to catch late orders and re-add gifts from skipped orders.</small>
         </div></div>
         <div class="step"><div class="step-num">3</div><div>
-          <p>Always do a dry run first. It changes nothing</p>
+          <p>Always do a dry run first — it changes nothing</p>
           <small>Then a live run for one or two test emails, then everyone</small>
         </div></div>
       </div>
     </div>
+
+    <div class="tier-freshness" id="giftTierNote"></div>
 
     <div class="card">
       <div class="card-title">Gift details</div>
@@ -411,7 +437,7 @@
         </div>
       </div>
       <div class="round-status" id="roundStatus"></div>
-      <small class="round-help">Keep the same round and last order date for every run in a round. Gifts only go on orders up to the last order date. Re-running weekly picks up late subscribers and re-adds gifts from skipped or cancelled orders, without doubling anyone up.</small>
+      <small class="round-help">Keep the same round and last order date for every run in a round. Gifts only go on orders up to the last order date — re-running weekly picks up late subscribers and re-adds gifts from skipped or cancelled orders, without doubling anyone up.</small>
 
       <div class="field">
         <label>Test customers only (optional)</label>
@@ -455,7 +481,28 @@
   <div id="tierTab">
 
   <div class="card">
-    <div class="card-title">How it works</div>
+    <div class="card-title">Update tiers now</div>
+    <p class="tier-intro">Tiers update automatically every <strong>Monday at about 5am</strong> from the last 12 months of Shopify orders — no file needed. Run it here before a gift dispatch, or any time you want tiers up to date. It takes about 5 minutes and you can close this page while it runs.</p>
+
+    <div class="field">
+      <label>Team password</label>
+      <input type="password" id="tierPassword" placeholder="Team password" autocomplete="current-password" onchange="tierPasswordEntered()">
+    </div>
+
+    <div class="tier-run-buttons">
+      <button class="run-btn secondary" id="tierTestBtn" onclick="startTierRun(true)">Test run</button>
+      <button class="run-btn" id="tierRunBtn" onclick="startTierRun(false)">Run tier update</button>
+    </div>
+    <p class="tiers-note">Test run shows what would change without changing anything · Silver &lt;$1,000 · Gold $1,000–$1,499 · Platinum $1,500+</p>
+
+    <div class="tier-status" id="tierStatus"><span class="muted">Enter the password to see the latest update</span></div>
+  </div>
+
+  <details class="backup">
+    <summary>Backup: update from an orders CSV file instead</summary>
+
+  <div class="card">
+    <div class="card-title">How the CSV backup works</div>
     <div class="steps">
       <div class="step">
         <div class="step-num">1</div>
@@ -474,8 +521,8 @@
       <div class="step">
         <div class="step-num">3</div>
         <div>
-          <p>Click Run → Shopify tags update automatically</p>
-          <small>Keep this page open until it says Complete (a full run takes 30 min)</small>
+          <p>Click Run — Shopify tags update automatically</p>
+          <small>Keep this page open until it says Complete (a full run takes ~30 min)</small>
         </div>
       </div>
     </div>
@@ -502,11 +549,11 @@
     <div class="mode-toggle">
       <div class="mode-btn" id="modeTest" onclick="setMode('test')">
         <strong>Test mode</strong>
-        <span>Platinum only · 2 min</span>
+        <span>Platinum only · ~2 min</span>
       </div>
       <div class="mode-btn active" id="modeFull" onclick="setMode('full')">
         <strong>Full run</strong>
-        <span>All customers · 30 min</span>
+        <span>All customers · ~30 min</span>
       </div>
     </div>
 
@@ -537,6 +584,7 @@
     <div class="progress-text" id="progressText">Starting...</div>
     <div class="log" id="log"></div>
   </div>
+  </details>
   </div>
 </div>
 
@@ -828,6 +876,142 @@
   }
 </script>
 <script>
+  // ---------------- Tier update via the automatic (GitHub) run ----------------
+  let tierPendingSince = null, tierPoll = null;
+  const fmtWhen = iso => iso ? new Date(iso).toLocaleString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+  const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const tierPw = () => (document.getElementById('tierPassword').value || document.getElementById('tokenInput').value || document.getElementById('giftPassword').value || '').trim();
+
+  async function tierCall(method, path, body) {
+    let res;
+    try {
+      res = await fetch(`${WORKER}${path}`, { method, headers: { 'X-Team-Password': tierPw(), 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    } catch (e) { throw new Error('Could not reach the loyalty server — check your internet'); }
+    let data = {};
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok) { const err = new Error(data.error || `Error ${res.status}`); err.status = res.status; throw err; }
+    return data;
+  }
+
+  function tierPasswordEntered() {
+    const pw = document.getElementById('tierPassword').value;
+    if (!document.getElementById('tokenInput').value) document.getElementById('tokenInput').value = pw;
+    refreshTierStatus();
+  }
+
+  function resultMatchesRun(result, run) {
+    if (!result || !run) return false;
+    if (result.runId) return result.runId === run.id;
+    return result.finishedAt && Date.parse(result.finishedAt) >= Date.parse(run.startedAt || run.createdAt);
+  }
+
+  function renderResult(result, run) {
+    const when = fmtWhen(result.finishedAt);
+    const by = run && run.event === 'schedule' ? 'automatic Monday update' : (result.trigger === 'schedule' ? 'automatic Monday update' : 'run manually');
+    const link = result.runUrl ? ` · <a href="${esc(result.runUrl)}" target="_blank" rel="noopener">details on GitHub</a>` : '';
+    if (result.status === 'error') {
+      return `<div class="headline bad">✗ The last tier update stopped (${esc(when)})</div><div>${esc(result.error || 'Unknown error')}</div><div class="muted">${link.replace(' · ', '')}</div>`;
+    }
+    const c = result.counts || {};
+    const moves = result.moves || [];
+    const head = result.dryRun
+      ? `<div class="headline">Test run · ${esc(when)} — <strong>nothing was changed</strong></div>`
+      : `<div class="headline ok">✓ Tiers updated ${esc(when)} <span class="muted">(${by})</span></div>`;
+    const verb = result.dryRun ? 'would move' : 'moved';
+    const table = moves.length ? `<details${moves.length <= 12 ? ' open' : ''}><summary>${moves.length} ${verb} into, out of or between gold &amp; platinum</summary>
+      <table><tr><th>Customer</th><th>From</th><th>To</th><th class="num">12-month spend</th></tr>
+      ${moves.map(m => `<tr><td>${esc(m.email)}</td><td>${esc(m.from)}</td><td>${esc(m.to)}</td><td class="num">$${Number(m.spend).toLocaleString('en-NZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>`).join('')}
+      </table></details>` : `<div class="muted">Nobody ${verb} into, out of or between gold &amp; platinum</div>`;
+    return `${head}
+      <div class="tier-summary">
+        <div class="tier-box"><span class="count">${c.platinum ?? '—'}</span><span class="label">🌿 Platinum</span></div>
+        <div class="tier-box"><span class="count">${c.gold ?? '—'}</span><span class="label">⭐ Gold</span></div>
+        <div class="tier-box"><span class="count">${c.silver ?? '—'}</span><span class="label">🤍 Silver</span></div>
+      </div>
+      <div class="muted">${(result.orders || 0).toLocaleString('en-NZ')} paid orders in the last 12 months · ${result.newSilver || 0} new silver · ${result.pointsToUpdate || 0} points ${result.dryRun ? 'to update' : 'updated'}${result.failed ? ` · <span class="bad">${result.failed} failed</span>` : ''}${link}</div>
+      ${table}`;
+  }
+
+  function setTierButtons(busy) {
+    document.getElementById('tierRunBtn').disabled = busy;
+    document.getElementById('tierTestBtn').disabled = busy;
+  }
+
+  async function refreshTierStatus() {
+    const box = document.getElementById('tierStatus');
+    if (!tierPw()) return;
+    let data;
+    try { data = await tierCall('GET', '/tiers/status'); }
+    catch (e) { box.innerHTML = `<span class="bad">${esc(e.message)}</span>`; return; }
+    window.lastTierStatus = data;
+    showGiftTierNote(data);
+    const runs = data.runs || [];
+    const latest = runs[0];
+    const running = latest && (latest.status === 'queued' || latest.status === 'in_progress' || latest.status === 'waiting');
+    const newRunSeen = tierPendingSince && runs.some(w => Date.parse(w.createdAt) >= tierPendingSince - 60000);
+    let html = '';
+    if (data.setup) html += `<div class="muted">The run-now button isn't connected yet: ${esc(data.setup)}</div>`;
+
+    if (tierPendingSince && !newRunSeen) {
+      html = `<div class="headline"><span class="spinner"></span>Starting… GitHub is getting ready</div><div class="muted">This usually takes under a minute</div>`;
+    } else if (running) {
+      const mins = Math.max(0, Math.round((Date.now() - Date.parse(latest.startedAt || latest.createdAt)) / 60000));
+      html = `<div class="headline"><span class="spinner"></span>${latest.status === 'queued' ? 'Waiting for GitHub to start…' : `Updating tiers… (${mins} min so far)`}</div>
+        <div class="muted">Usually about 5 minutes. You can close this page — results will be here when you come back.</div>`;
+    } else if (latest && data.result && resultMatchesRun(data.result, latest)) {
+      html += renderResult(data.result, latest);
+      tierPendingSince = null;
+    } else if (latest && latest.conclusion && latest.conclusion !== 'success') {
+      html += `<div class="headline bad">✗ The last tier update ${latest.conclusion === 'cancelled' ? 'was cancelled' : 'failed'} (${esc(fmtWhen(latest.updatedAt))})</div>
+        <div class="muted"><a href="${esc(latest.url)}" target="_blank" rel="noopener">See what happened on GitHub</a></div>`;
+      tierPendingSince = null;
+    } else if (data.result) {
+      html += renderResult(data.result, latest);
+    } else if (!data.setup) {
+      html += `<div class="muted">No results yet — the next automatic update will show here, or run one now.</div>`;
+    }
+    box.innerHTML = html;
+    const busy = !!(running || (tierPendingSince && !newRunSeen));
+    setTierButtons(busy);
+    clearTimeout(tierPoll);
+    if (busy || (latest && latest.status === 'completed' && !resultMatchesRun(data.result, latest) && Date.now() - Date.parse(latest.updatedAt) < 120000)) {
+      tierPoll = setTimeout(refreshTierStatus, 10000);
+    }
+  }
+
+  async function startTierRun(dry) {
+    if (!tierPw()) { alert('Please enter the team password.'); return; }
+    if (!dry && !confirm('Update loyalty tiers for all customers now?\n\nThis changes customer tags in Shopify and takes about 5 minutes.')) return;
+    setTierButtons(true);
+    try {
+      await tierCall('POST', '/tiers/run', { dryRun: dry });
+      tierPendingSince = Date.now();
+      document.getElementById('tierStatus').innerHTML = `<div class="headline"><span class="spinner"></span>Starting…</div>`;
+      setTimeout(refreshTierStatus, 4000);
+    } catch (e) {
+      setTierButtons(false);
+      alert(e.message);
+      refreshTierStatus();
+    }
+  }
+
+  // Small note on the gift tab: when were tiers last updated?
+  function showGiftTierNote(data) {
+    const el = document.getElementById('giftTierNote');
+    if (!el) return;
+    const res = data && data.result;
+    const runs = (data && data.runs) || [];
+    if (runs[0] && ['queued', 'in_progress'].includes(runs[0].status)) {
+      el.className = 'tier-freshness'; el.innerHTML = '<span class="spinner"></span>A tier update is running now — wait for it to finish before dispatching gifts.'; return;
+    }
+    const live = (res && !res.dryRun && res.status === 'complete') ? res : (data && data.lastLive) || null;
+    if (!live) { el.className = 'tier-freshness'; el.innerHTML = '<span class="muted">Tip: run a tier update first so gifts go to the right people.</span> <a onclick="showTab(\'tier\')">Update tiers →</a>'; return; }
+    const days = (Date.now() - Date.parse(live.finishedAt)) / 86400000;
+    el.className = 'tier-freshness' + (days > 3 ? ' stale' : '');
+    el.innerHTML = `Tiers last updated <strong>${esc(fmtWhen(live.finishedAt))}</strong>${days > 3 ? ' — consider updating before dispatching gifts.' : '.'} <a onclick="showTab('tier')">Update tiers →</a>`;
+  }
+</script>
+<script>
   // ---------------- Tabs ----------------
   function showTab(t) {
     document.getElementById('tierTab').style.display = t === 'tier' ? '' : 'none';
@@ -835,9 +1019,10 @@
     document.getElementById('tabTierBtn').classList.toggle('active', t === 'tier');
     document.getElementById('tabGiftBtn').classList.toggle('active', t === 'gift');
     if (t === 'gift' && !document.getElementById('giftPassword').value) {
-      document.getElementById('giftPassword').value = document.getElementById('tokenInput').value;
+      document.getElementById('giftPassword').value = document.getElementById('tierPassword').value || document.getElementById('tokenInput').value;
     }
-    if (t === 'gift' && document.getElementById('giftPassword').value) giftPasswordEntered();
+    if (t === 'gift' && document.getElementById('giftPassword').value) { giftPasswordEntered(); refreshTierStatus(); }
+    if (t === 'tier' && tierPw()) refreshTierStatus();
   }
 
   // ---------------- Gift dispatch ----------------
@@ -1047,6 +1232,7 @@
     if (!pw) return;
     if (!sharedLoaded) await loadShared(pw);
     if (!products.length) loadProducts();
+    if (!window.lastTierStatus) refreshTierStatus();
   }
 
   (function initRound() { applySettings(localRound()); showRoundStatus(); })();
