@@ -285,6 +285,12 @@
   .tier-pick.off .field, .tier-pick.off .field-row { display: none; }
   .tier-pick.off .tier-pick-title::after { content: '— not included this round'; text-transform: none; letter-spacing: 0; color: #aaa; margin-left: 4px; }
   .manual-ids { margin-top: 16px; font-size: 13px; color: #777; }
+  .gift-thumb {
+    flex: 0 0 64px; width: 64px; height: 64px; margin-top: 20px; align-self: flex-end;
+    border: 1px solid #F0E8EC; border-radius: 4px; background: #FEF5F7; overflow: hidden;
+  }
+  .gift-thumb:empty { background: #FEF5F7 center / 24px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23E8C5CF' stroke-width='1.5'%3E%3Crect x='3' y='8' width='18' height='13' rx='1'/%3E%3Cpath d='M12 8v13M3 12h18M12 8c-2-4-6-4-6-1s6 1 6 1c0 0 6 2 6-1s-4-3-6 1'/%3E%3C/svg%3E"); }
+  .gift-thumb img { width: 100%; height: 100%; object-fit: contain; background: #fff; display: block; }
   .round-status { margin-top: 8px; font-size: 12px; color: #555; }
   .round-help { display: block; margin-top: 6px; font-size: 12px; color: #aaa; line-height: 1.5; }
   .manual-ids summary { cursor: pointer; }
@@ -295,6 +301,7 @@
     .tier-summary.four { grid-template-columns: repeat(2, 1fr); }
     .field-row { flex-direction: column; gap: 0; }
     .field-row .field.qty { flex: 1; }
+    .tier-pick .gift-thumb { width: 96px; height: 96px; flex-basis: auto; align-self: flex-start; }
   }
 </style>
 </head>
@@ -346,6 +353,7 @@
           <select id="goldProductSel" onchange="productChosen('gold', true)"><option value="">Load products first</option></select>
         </div>
         <div class="field-row">
+          <div class="gift-thumb" id="goldThumb"></div>
           <div class="field">
             <label>Variant</label>
             <select id="goldVariantSel" onchange="variantChosen('gold')"></select>
@@ -364,6 +372,7 @@
           <select id="platProductSel" onchange="productChosen('plat', true)"><option value="">Load products first</option></select>
         </div>
         <div class="field-row">
+          <div class="gift-thumb" id="platThumb"></div>
           <div class="field">
             <label>Variant</label>
             <select id="platVariantSel" onchange="variantChosen('plat')"></select>
@@ -855,7 +864,7 @@
     btn.disabled = true; status.textContent = 'Loading products...';
     try {
       const out = [];
-      let path = '/admin/api/2026-07/products.json?limit=250&fields=id,title,status,variants';
+      let path = '/admin/api/2026-07/products.json?limit=250&fields=id,title,status,variants,images,image';
       for (let page = 0; path && page < 40; page++) {
         let res;
         try {
@@ -866,10 +875,15 @@
         }
         for (const p of res.data.products || []) {
           if (p.status === 'archived') continue;
+          const images = p.images || [];
+          const mainImg = (p.image && p.image.src) || (images[0] && images[0].src) || '';
           out.push({
             id: String(p.id),
             title: p.title + (p.status && p.status !== 'active' ? ` (${p.status})` : ''),
-            variants: (p.variants || []).map(v => ({ id: String(v.id), title: v.title || 'Default' })),
+            variants: (p.variants || []).map(v => {
+              const own = images.find(im => im.id === v.image_id) || images.find(im => (im.variant_ids || []).includes(v.id));
+              return { id: String(v.id), title: v.title || 'Default', image: (own && own.src) || mainImg };
+            }),
           });
         }
         const link = res.headers.get('Link') || '';
@@ -900,7 +914,7 @@
     const pid = document.getElementById(t + 'ProductSel').value;
     const p = products.find(x => x.id === pid);
     const vsel = document.getElementById(t + 'VariantSel');
-    if (!p) { vsel.innerHTML = ''; return; }
+    if (!p) { vsel.innerHTML = ''; showThumb(t); return; }
     document.getElementById(t + 'Product').value = p.id;
     document.getElementById(t + 'Title').value = p.title.replace(/ \((draft|unlisted)\)$/, '');
     if (!p.variants.length) {
@@ -924,8 +938,21 @@
     if (byUser && t === 'plat') window.platPicked = true;
   }
 
+  function showThumb(t) {
+    const box = document.getElementById(t + 'Thumb');
+    const p = products.find(x => x.id === document.getElementById(t + 'ProductSel').value);
+    const v = p && p.variants.find(x => x.id === document.getElementById(t + 'VariantSel').value);
+    if (v && v.image) {
+      const src = v.image + (v.image.includes('?') ? '&' : '?') + 'width=200';
+      box.innerHTML = `<img src="${src}" alt="">`;
+    } else {
+      box.innerHTML = '';
+    }
+  }
+
   function variantChosen(t) {
     const vsel = document.getElementById(t + 'VariantSel');
+    showThumb(t);
     if (!vsel.value) return;
     document.getElementById(t + 'Variant').value = vsel.value;
     document.getElementById(t + 'VariantTitle').value = vsel.options[vsel.selectedIndex].text;
