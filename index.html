@@ -482,7 +482,7 @@
 
   <div class="card">
     <div class="card-title">Update tiers now</div>
-    <p class="tier-intro">Tiers update automatically every <strong>Monday at about 5am</strong> from the last 12 months of Shopify orders — no file needed. Run it here before a gift dispatch, or any time you want tiers up to date. It takes about 5 minutes and you can close this page while it runs.</p>
+    <p class="tier-intro">Tiers update automatically every <strong>Monday at about 5am</strong> from the last 12 months of Shopify orders. Run it here before a gift dispatch, or any time you want tiers up to date. It takes about 5 minutes and you can close this page while it runs.</p>
 
     <div class="field">
       <label>Team password</label>
@@ -968,7 +968,7 @@
     } else if (data.result) {
       html += renderResult(data.result, latest);
     } else if (!data.setup) {
-      html += `<div class="muted">No results yet — the next automatic update will show here, or run one now.</div>`;
+      html += `<div class="muted">No results yet. The next automatic update will show here, or run one now.</div>`;
     }
     box.innerHTML = html;
     const busy = !!(running || (tierPendingSince && !newRunSeen));
