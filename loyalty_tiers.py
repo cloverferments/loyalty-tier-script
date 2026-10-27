@@ -41,6 +41,9 @@ STORE = _store_name(os.environ.get("SHOPIFY_STORE", ""))
 CLIENT_ID = os.environ.get("SHOPIFY_CLIENT_ID", "").strip()
 CLIENT_SECRET = os.environ.get("SHOPIFY_CLIENT_SECRET", "").strip()
 DRY_RUN = os.environ.get("DRY_RUN", "false").strip().lower() in ("1", "true", "yes")
+# Optional: report results back to the loyalty dashboard
+DASHBOARD_URL = os.environ.get("LOYALTY_WORKER_URL", "https://loyalty-proxy.kitchen-2a8.workers.dev").strip().rstrip("/")
+DASHBOARD_PASSWORD = os.environ.get("LOYALTY_TEAM_PASSWORD", "").strip()
 
 API_VERSION = "2026-07"
 BASE = f"https://{STORE}.myshopify.com"
@@ -55,6 +58,7 @@ WINDOW_DAYS = 365
 
 session = requests.Session()
 summary_lines = []
+RESULT = {"dryRun": DRY_RUN, "trigger": os.environ.get("GITHUB_EVENT_NAME", "manual")}
 
 
 def log(msg=""):
@@ -222,6 +226,7 @@ def twelve_month_spend():
         spend[email] += amount
         counted += 1
     summary(f"- **{counted}** paid orders in the last 12 months from **{len(spend)}** customers")
+    RESULT.update(orders=counted, customersWithOrders=len(spend))
     return spend
 
 
@@ -315,6 +320,12 @@ def main():
     moves = [x for x in tier_changes if x[1] != "none" or x[2] != "loyalty-silver"]
     summary(f"- Tier changes: **{len(tier_changes)}** ({len(moves)} into or between gold/platinum, the rest new silver tags)")
     summary(f"- Points to update: **{len(points_updates)}**")
+    RESULT.update(
+        counts={"platinum": counts["loyalty-platinum"], "gold": counts["loyalty-gold"], "silver": counts["loyalty-silver"]},
+        tierChanges=len(tier_changes), newSilver=len(tier_changes) - len(moves), pointsToUpdate=len(points_updates),
+        moves=[{"email": c.get("email") or numeric_id(c["id"]), "from": old.replace("loyalty-", ""), "to": new.replace("loyalty-", ""), "spend": round(s, 2)}
+               for c, old, new, s in sorted(moves, key=lambda x: -x[3])[:300]],
+    )
 
     if moves:
         summary("\n| Customer | From | To | 12-month spend |\n|---|---|---|---|")
@@ -323,6 +334,7 @@ def main():
 
     if DRY_RUN:
         summary("\nTest run finished — nothing was changed.")
+        RESULT["status"] = "complete"
         return
 
     log("\nUpdating tiers...")
@@ -342,10 +354,29 @@ def main():
             point_errors += len(errs)
             log(f"  ! {errs[:2]}")
 
+    RESULT.update(status="complete", failed=failed, pointErrors=point_errors)
     summary(f"\nDone in {int((datetime.now() - started).total_seconds() // 60)} min — "
             f"{len(tier_changes) - failed} tiers updated, {failed} failed, {len(points_updates)} points updated ({point_errors} errors)")
     if failed:
         sys.exit(1)
+
+
+def report_to_dashboard():
+    """Send the results to the dashboard so staff can see them without opening GitHub."""
+    if not DASHBOARD_PASSWORD or not DASHBOARD_URL:
+        return
+    RESULT.setdefault("status", "error")
+    RESULT["finishedAt"] = datetime.now(timezone.utc).isoformat()
+    server, repo, run_id = os.environ.get("GITHUB_SERVER_URL"), os.environ.get("GITHUB_REPOSITORY"), os.environ.get("GITHUB_RUN_ID")
+    if server and repo and run_id:
+        RESULT["runUrl"] = f"{server}/{repo}/actions/runs/{run_id}"
+        RESULT["runId"] = int(run_id)
+    try:
+        r = requests.put(f"{DASHBOARD_URL}/tiers/result", data=json.dumps(RESULT),
+                         headers={"X-Team-Password": DASHBOARD_PASSWORD, "Content-Type": "application/json"}, timeout=30)
+        log(f"Results sent to the dashboard ({r.status_code})")
+    except Exception as e:
+        log(f"Couldn't send results to the dashboard: {e}")
 
 
 if __name__ == "__main__":
@@ -358,11 +389,14 @@ if __name__ == "__main__":
     except SystemExit as e:
         if e.code not in (0, None):
             summary(f"\n**❌ Stopped:** {e.code}")
+            RESULT.update(status="error", error=str(e.code)[:500])
         raise
     except Exception as e:
         summary(f"\n**❌ Stopped:** {type(e).__name__}: {str(e)[:500]}")
+        RESULT.update(status="error", error=f"{type(e).__name__}: {str(e)[:500]}")
         raise
     finally:
+        report_to_dashboard()
         path = os.environ.get("GITHUB_STEP_SUMMARY")
         if path and summary_lines:
             with open(path, "a") as f:
