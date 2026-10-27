@@ -1,221 +1,296 @@
+"""
+Clover Ferments — weekly loyalty tier update (runs on GitHub Actions)
+
+No CSV needed: pulls the last 12 months of paid orders straight from Shopify,
+adds up each customer's spend, and updates only the customers whose tier or
+points have changed.
+
+Tiers (12-month spend): Silver < $1,000 · Gold $1,000–$1,499 · Platinum $1,500+
+
+Environment (GitHub secrets):
+  SHOPIFY_STORE          e.g. cloverferments
+  SHOPIFY_CLIENT_ID      app Client ID
+  SHOPIFY_CLIENT_SECRET  app Client secret
+  DRY_RUN                "true" = report only, change nothing
+"""
+
+import json
 import os
-import csv
-import requests
+import sys
 import time
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 
-CLIENT_SECRET = os.environ["SHOPIFY_CLIENT_SECRET"]
-STORE = os.environ["SHOPIFY_STORE"]
-REST_URL = f"https://{STORE}.myshopify.com/admin/api/2026-07"
+import requests
 
-PLATINUM_THRESHOLD = 1500
-GOLD_THRESHOLD = 1000
+STORE = os.environ["SHOPIFY_STORE"].strip()
+CLIENT_ID = os.environ.get("SHOPIFY_CLIENT_ID", "").strip()
+CLIENT_SECRET = os.environ["SHOPIFY_CLIENT_SECRET"].strip()
+DRY_RUN = os.environ.get("DRY_RUN", "false").strip().lower() in ("1", "true", "yes")
+
+API_VERSION = "2026-07"
+BASE = f"https://{STORE}.myshopify.com"
+REST = f"{BASE}/admin/api/{API_VERSION}"
+GRAPHQL = f"{REST}/graphql.json"
+
+PLATINUM = 1500
+GOLD = 1000
 TIER_TAGS = ["loyalty-silver", "loyalty-gold", "loyalty-platinum"]
-CSV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "orders.csv")
-TEST_MODE = False  # Set to False to process all customers
+COUNTED_STATUSES = {"PAID", "PARTIALLY_REFUNDED"}
+WINDOW_DAYS = 365
+
+session = requests.Session()
+summary_lines = []
 
 
-def get_headers():
-    return {
-        "X-Shopify-Access-Token": CLIENT_SECRET,
-        "Content-Type": "application/json"
-    }
+def log(msg=""):
+    print(msg, flush=True)
 
 
-def make_request(method, url, **kwargs):
-    for attempt in range(5):
-        if method == "get":
-            response = requests.get(url, headers=get_headers(), **kwargs)
-        elif method == "put":
-            response = requests.put(url, headers=get_headers(), **kwargs)
-        elif method == "post":
-            response = requests.post(url, headers=get_headers(), **kwargs)
+def summary(msg=""):
+    """Also written to the GitHub run summary page."""
+    log(msg)
+    summary_lines.append(msg)
 
-        if response.status_code == 429:
-            retry_after = int(float(response.headers.get("Retry-After", 2)))
-            print(f"Rate limited, waiting {retry_after}s...")
-            time.sleep(retry_after)
+
+# ---------------------------------------------------------------- auth
+
+def get_access_token():
+    """Newer Shopify apps swap Client ID + secret for a short-lived token.
+    Older setups stored an access token directly in SHOPIFY_CLIENT_SECRET."""
+    if CLIENT_ID:
+        r = session.post(
+            f"{BASE}/admin/oauth/access_token",
+            data={"grant_type": "client_credentials", "client_id": CLIENT_ID, "client_secret": CLIENT_SECRET},
+            headers={"Accept": "application/json"},
+            timeout=30,
+        )
+        if r.ok and r.json().get("access_token"):
+            return r.json()["access_token"]
+        log(f"Client ID/secret exchange didn't work ({r.status_code}) — trying the secret as an access token")
+    return CLIENT_SECRET
+
+
+def request(method, url, **kwargs):
+    for attempt in range(8):
+        r = session.request(method, url, timeout=60, **kwargs)
+        if r.status_code == 429 or r.status_code >= 500:
+            wait = float(r.headers.get("Retry-After", 2 + attempt * 2))
+            log(f"  Shopify busy ({r.status_code}) — waiting {wait:.0f}s")
+            time.sleep(wait)
             continue
-        return response
-    return response
+        return r
+    return r
 
 
-def calculate_spend_from_csv():
-    customer_spend = defaultdict(float)
-    seen_orders = set()
+def graphql(query, variables=None):
+    for attempt in range(8):
+        r = request("POST", GRAPHQL, json={"query": query, "variables": variables or {}})
+        if r.status_code in (401, 403):
+            raise SystemExit(f"ERROR: Shopify refused access ({r.status_code}). Check the app's permissions and the GitHub secrets.\n{r.text[:300]}")
+        r.raise_for_status()
+        data = r.json()
+        errors = data.get("errors")
+        if errors:
+            if any((e.get("extensions") or {}).get("code") == "THROTTLED" for e in errors):
+                time.sleep(2 + attempt * 2)
+                continue
+            raise RuntimeError(f"GraphQL error: {json.dumps(errors)[:500]}")
+        return data["data"]
+    raise RuntimeError("Shopify kept throttling GraphQL requests")
 
-    with open(CSV_FILE, "rb") as f:
-        raw = f.read()
 
-    print(f"CSV file size: {len(raw)} bytes")
-    print(f"First 100 bytes: {raw[:100]}")
+# ---------------------------------------------------------------- bulk export
 
-    if raw.startswith(b'\xef\xbb\xbf'):
-        raw = raw[3:]
-        print("BOM removed")
+def run_bulk_query(inner_query, label):
+    """Ask Shopify to export everything matching the query to one file, then download it."""
+    started = graphql(
+        """mutation($q: String!) {
+             bulkOperationRunQuery(query: $q) { bulkOperation { id status } userErrors { field message } }
+           }""",
+        {"q": inner_query},
+    )["bulkOperationRunQuery"]
+    if started["userErrors"]:
+        raise RuntimeError(f"Couldn't start {label} export: {started['userErrors']}")
+    op_id = started["bulkOperation"]["id"]
+    log(f"  {label} export started")
 
-    content = raw.decode("utf-8").replace('\r\n', '\n').replace('\r', '\n')
-    lines = content.splitlines()
-    print(f"Total lines in CSV: {len(lines)}")
-    print(f"Header line: {lines[0][:100] if lines else 'EMPTY'}")
+    for _ in range(240):  # up to ~40 minutes
+        time.sleep(10)
+        op = graphql(
+            """query($id: ID!) { node(id: $id) { ... on BulkOperation { status errorCode objectCount url } } }""",
+            {"id": op_id},
+        )["node"]
+        if op["status"] == "COMPLETED":
+            log(f"  {label} export ready ({op['objectCount']} rows)")
+            if not op["url"]:
+                return []
+            text = request("GET", op["url"]).text
+            return [json.loads(line) for line in text.splitlines() if line.strip()]
+        if op["status"] in ("FAILED", "CANCELED", "EXPIRED"):
+            raise RuntimeError(f"{label} export {op['status']} ({op.get('errorCode')})")
+    raise RuntimeError(f"{label} export took too long")
 
-    reader = csv.DictReader(lines)
-    print(f"CSV columns detected: {reader.fieldnames}")
 
-    row_count = 0
-    for row in reader:
-        row_count += 1
-        order_name = (row.get("Name") or "").strip()
-        email = (row.get("Email") or "").strip().lower()
-        financial_status = (row.get("Financial Status") or "").strip().lower()
-        total = (row.get("Total") or "0").strip()
-        paid_at = (row.get("Paid at") or "").strip()
-
-        if not email or not order_name:
+def twelve_month_spend():
+    since = (datetime.now(timezone.utc) - timedelta(days=WINDOW_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = run_bulk_query(
+        f"""{{ orders(query: "processed_at:>='{since}'") {{ edges {{ node {{
+              id name email processedAt displayFinancialStatus
+              totalPriceSet {{ shopMoney {{ amount }} }}
+              customer {{ id email }}
+            }} }} }} }}""",
+        "Orders",
+    )
+    spend = defaultdict(float)
+    seen = set()
+    counted = 0
+    for o in rows:
+        if o.get("name") in seen:
             continue
-        if order_name in seen_orders:
+        if (o.get("displayFinancialStatus") or "").upper() not in COUNTED_STATUSES:
             continue
-        if financial_status not in ["paid", "partially_refunded"]:
+        email = ((o.get("customer") or {}).get("email") or o.get("email") or "").strip().lower()
+        if not email:
             continue
-        if not paid_at:
-            continue
-
         try:
-            amount = float(total)
-        except ValueError:
+            amount = float(o["totalPriceSet"]["shopMoney"]["amount"])
+        except (KeyError, TypeError, ValueError):
             continue
-
-        seen_orders.add(order_name)
-        customer_spend[email] += amount
-
-    print(f"Total rows read: {row_count}")
-    print(f"Processed {len(seen_orders)} orders for {len(customer_spend)} customers")
-    return customer_spend
+        seen.add(o.get("name"))
+        spend[email] += amount
+        counted += 1
+    summary(f"- **{counted}** paid orders in the last 12 months from **{len(spend)}** customers")
+    return spend
 
 
-def get_customers_by_email(emails):
-    """Fetch specific customers by email."""
-    customers = []
-    for email in emails:
-        response = make_request("get", f"{REST_URL}/customers/search.json?query=email:{email}&limit=1")
-        results = response.json().get("customers", [])
-        if results:
-            customers.append(results[0])
-        time.sleep(0.3)
-    print(f"Found {len(customers)} matching customers in Shopify")
-    return customers
+def all_customers():
+    rows = run_bulk_query(
+        """{ customers { edges { node {
+              id email tags
+              points: metafield(namespace: "custom", key: "loyalty_points") { value }
+            } } } }""",
+        "Customers",
+    )
+    return rows
 
 
-def get_all_customers():
-    customers = []
-    url = f"{REST_URL}/customers.json?limit=250"
+# ---------------------------------------------------------------- tiers
 
-    while url:
-        response = make_request("get", url)
-        response.raise_for_status()
-        data = response.json()
-        customers.extend(data.get("customers", []))
-
-        link_header = response.headers.get("Link", "")
-        url = None
-        if 'rel="next"' in link_header:
-            for part in link_header.split(","):
-                if 'rel="next"' in part:
-                    url = part.split(";")[0].strip().strip("<>")
-
-        time.sleep(0.5)
-
-    print(f"Found {len(customers)} customers in Shopify")
-    return customers
-
-
-def calculate_tier(spend):
-    if spend >= PLATINUM_THRESHOLD:
+def tier_for(spend):
+    if spend >= PLATINUM:
         return "loyalty-platinum"
-    elif spend >= GOLD_THRESHOLD:
+    if spend >= GOLD:
         return "loyalty-gold"
-    else:
-        return "loyalty-silver"
+    return "loyalty-silver"
 
 
-def update_customer(customer_id, current_tags, new_tier, spend):
-    tags_list = [t.strip() for t in current_tags.split(",") if t.strip()]
-    tags_list = [t for t in tags_list if t not in TIER_TAGS]
-    tags_list.append(new_tier)
-    new_tags = ", ".join(tags_list)
+def numeric_id(gid):
+    return gid.rsplit("/", 1)[-1]
 
-    url = f"{REST_URL}/customers/{customer_id}.json"
-    payload = {"customer": {"id": customer_id, "tags": new_tags}}
-    response = make_request("put", url, json=payload)
 
-    if response.status_code == 200:
-        metafield_url = f"{REST_URL}/customers/{customer_id}/metafields.json"
-        metafield_payload = {
-            "metafield": {
-                "namespace": "custom",
-                "key": "loyalty_points",
-                "value": str(int(round(spend))),
-                "type": "single_line_text_field"
-            }
-        }
-        make_request("post", metafield_url, json=metafield_payload)
-        time.sleep(0.5)
-        return True
-    return False
+def update_tags(customer, new_tier):
+    tags = [t.strip() for t in customer.get("tags") or [] if t.strip() and t.strip() not in TIER_TAGS]
+    tags.append(new_tier)
+    r = request(
+        "PUT",
+        f"{REST}/customers/{numeric_id(customer['id'])}.json",
+        json={"customer": {"id": int(numeric_id(customer["id"])), "tags": ", ".join(tags)}},
+    )
+    time.sleep(0.5)
+    return r.ok
+
+
+def set_points(batch):
+    """batch: list of (customer gid, points string). Up to 25 per call."""
+    result = graphql(
+        """mutation($m: [MetafieldsSetInput!]!) {
+             metafieldsSet(metafields: $m) { userErrors { field message } }
+           }""",
+        {"m": [
+            {"ownerId": gid, "namespace": "custom", "key": "loyalty_points", "type": "single_line_text_field", "value": pts}
+            for gid, pts in batch
+        ]},
+    )["metafieldsSet"]
+    return result["userErrors"]
 
 
 def main():
-    test_response = make_request("get", f"{REST_URL}/shop.json")
-    if test_response.status_code != 200:
-        print(f"ERROR: Could not connect. Status: {test_response.status_code}")
-        raise SystemExit(1)
-    print(f"✓ Connected to Shopify store: {STORE}")
+    started = datetime.now()
+    summary(f"## Loyalty tier update — {started:%a %d %b %Y}")
+    summary("**TEST RUN — nothing will be changed**" if DRY_RUN else "Live run")
 
-    print(f"\nReading {CSV_FILE}...")
-    customer_spend = calculate_spend_from_csv()
+    global session
+    token = get_access_token()
+    session.headers.update({"X-Shopify-Access-Token": token, "Content-Type": "application/json"})
+    shop = request("GET", f"{REST}/shop.json")
+    if not shop.ok:
+        raise SystemExit(f"ERROR: Could not connect to Shopify ({shop.status_code}). Check the GitHub secrets.\n{shop.text[:300]}")
+    log(f"✓ Connected to {shop.json()['shop']['name']}")
 
-    top = sorted(customer_spend.items(), key=lambda x: x[1], reverse=True)[:10]
-    print("\nTop 10 spenders from CSV:")
-    for email, spend in top:
-        print(f"  {email}: ${spend:.2f}")
+    log("\nReading 12 months of orders...")
+    spend = twelve_month_spend()
+    log("\nReading customers...")
+    customers = all_customers()
 
-    if TEST_MODE:
-        # Only fetch and update platinum customers
-        platinum_emails = [email for email, spend in customer_spend.items() if spend >= PLATINUM_THRESHOLD]
-        print(f"\nTEST MODE: Processing {len(platinum_emails)} platinum customers only")
-        customers = get_customers_by_email(platinum_emails)
-    else:
-        print("\nFetching all customers from Shopify...")
-        customers = get_all_customers()
+    counts = {t: 0 for t in TIER_TAGS}
+    tier_changes = []
+    points_updates = []
+    for c in customers:
+        email = (c.get("email") or "").strip().lower()
+        s = spend.get(email, 0.0)
+        new_tier = tier_for(s)
+        counts[new_tier] += 1
+        current = [t for t in (c.get("tags") or []) if t in TIER_TAGS]
+        if current != [new_tier]:
+            tier_changes.append((c, current[0] if current else "none", new_tier, s))
+        points = str(int(round(s)))
+        old_points = (c.get("points") or {}).get("value")
+        if old_points != points and not (old_points is None and points == "0"):
+            points_updates.append((c["id"], points))
 
-    updated = 0
-    errors = 0
-    skipped = 0
+    summary(f"- Tiers: **{counts['loyalty-platinum']} platinum** · **{counts['loyalty-gold']} gold** · {counts['loyalty-silver']} silver")
+    moves = [x for x in tier_changes if x[1] != "none" or x[2] != "loyalty-silver"]
+    summary(f"- Tier changes: **{len(tier_changes)}** ({len(moves)} into or between gold/platinum, the rest new silver tags)")
+    summary(f"- Points to update: **{len(points_updates)}**")
 
-    for i, customer in enumerate(customers):
-        customer_id = customer["id"]
-        current_tags = customer.get("tags", "")
-        email = (customer.get("email") or "").lower()
+    if moves:
+        summary("\n| Customer | From | To | 12-month spend |\n|---|---|---|---|")
+        for c, old, new, s in sorted(moves, key=lambda x: -x[3])[:200]:
+            summary(f"| {c.get('email') or numeric_id(c['id'])} | {old.replace('loyalty-', '')} | {new.replace('loyalty-', '')} | ${s:,.2f} |")
 
-        spend = customer_spend.get(email, 0.0)
-        new_tier = calculate_tier(spend)
+    if DRY_RUN:
+        summary("\nTest run finished — nothing was changed.")
+        return
 
-        current_tier_tags = [t.strip() for t in current_tags.split(",") if t.strip() in TIER_TAGS]
-        if current_tier_tags == [new_tier]:
-            skipped += 1
-            print(f"  skipped {email} (already {new_tier})")
-            continue
+    log("\nUpdating tiers...")
+    failed = 0
+    for i, (c, old, new, s) in enumerate(tier_changes, 1):
+        if not update_tags(c, new):
+            failed += 1
+            log(f"  ✗ couldn't update {c.get('email')}")
+        if i % 100 == 0:
+            log(f"  {i}/{len(tier_changes)}")
 
-        success = update_customer(customer_id, current_tags, new_tier, spend)
-        if success:
-            updated += 1
-            print(f"✓ {email}: ${spend:.2f} → {new_tier}")
-        else:
-            errors += 1
-            print(f"✗ Failed to update {email}")
+    log("Updating points...")
+    point_errors = 0
+    for i in range(0, len(points_updates), 25):
+        errs = set_points(points_updates[i:i + 25])
+        if errs:
+            point_errors += len(errs)
+            log(f"  ! {errs[:2]}")
 
-    print(f"\nDone. Updated: {updated}, Errors: {errors}, Skipped: {skipped}")
+    summary(f"\nDone in {int((datetime.now() - started).total_seconds() // 60)} min — "
+            f"{len(tier_changes) - failed} tiers updated, {failed} failed, {len(points_updates)} points updated ({point_errors} errors)")
+    if failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if path and summary_lines:
+            with open(path, "a") as f:
+                f.write("\n".join(summary_lines) + "\n")
