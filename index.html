@@ -279,7 +279,11 @@
   .products-status { display: block; margin-top: 8px; font-size: 12px; color: #aaa; text-align: center; }
   .tier-pick { margin-top: 20px; padding: 16px; border: 1px solid #F0E8EC; border-radius: 4px; }
   .tier-pick .field:first-of-type { margin-top: 12px; }
-  .tier-pick-title { font-size: 12px; letter-spacing: 0.15em; text-transform: uppercase; color: #555; }
+  .tier-pick-title { display: flex; align-items: center; gap: 8px; font-size: 12px; letter-spacing: 0.15em; text-transform: uppercase; color: #555; cursor: pointer; }
+  .tier-pick-title input { width: 16px; height: 16px; accent-color: #1A1A1A; }
+  .tier-pick.off { background: #FAFAFA; }
+  .tier-pick.off .field, .tier-pick.off .field-row { display: none; }
+  .tier-pick.off .tier-pick-title::after { content: '— not included this round'; text-transform: none; letter-spacing: 0; color: #aaa; margin-left: 4px; }
   .manual-ids { margin-top: 16px; font-size: 13px; color: #777; }
   .manual-ids summary { cursor: pointer; }
   #giftTab .mode-toggle .mode-btn { min-width: 160px; }
@@ -309,7 +313,7 @@
       <div class="card-title">How gift dispatch works</div>
       <div class="steps">
         <div class="step"><div class="step-num">1</div><div>
-          <p>Finds every customer tagged loyalty-gold or loyalty-platinum</p>
+          <p>Finds every customer in the tiers you tick (gold, platinum or both)</p>
           <small>Run the tier update first so tags are current. Anyone already marked as sent for this gift month is skipped.</small>
         </div></div>
         <div class="step"><div class="step-num">2</div><div>
@@ -333,8 +337,8 @@
       <button class="run-btn secondary" id="loadProductsBtn" onclick="loadProducts()">Load products</button>
       <small class="products-status" id="productsStatus">Enter the password, then load your products to pick the gift</small>
 
-      <div class="tier-pick">
-        <div class="tier-pick-title">⭐ Gold gift</div>
+      <div class="tier-pick" id="goldBox">
+        <label class="tier-pick-title"><input type="checkbox" id="goldOn" checked onchange="tierToggled('gold')"> ⭐ Gold gift</label>
         <div class="field">
           <label>Product</label>
           <select id="goldProductSel" onchange="productChosen('gold', true)"><option value="">Load products first</option></select>
@@ -351,8 +355,8 @@
         </div>
       </div>
 
-      <div class="tier-pick">
-        <div class="tier-pick-title">🌿 Platinum gift</div>
+      <div class="tier-pick" id="platBox">
+        <label class="tier-pick-title"><input type="checkbox" id="platOn" checked onchange="tierToggled('plat')"> 🌿 Platinum gift</label>
         <div class="field">
           <label>Product</label>
           <select id="platProductSel" onchange="productChosen('plat', true)"><option value="">Load products first</option></select>
@@ -394,7 +398,7 @@
       <div class="field">
         <label>Test customers only (optional)</label>
         <input id="testEmails" placeholder="you@cloverferments.co.nz, another@email.com">
-        <small>Leave empty to include every gold & platinum customer</small>
+        <small>Leave empty to include everyone in the ticked tiers</small>
       </div>
 
       <div class="mode-toggle three">
@@ -1047,6 +1051,33 @@
     document.body.appendChild(a); a.click(); a.remove();
   }
 
+  function tierToggled(t) {
+    document.getElementById(t + 'Box').classList.toggle('off', !document.getElementById(t + 'On').checked);
+  }
+
+  function enabledTags() {
+    const tags = [];
+    if (document.getElementById('platOn').checked) tags.push('loyalty-platinum');
+    if (document.getElementById('goldOn').checked) tags.push('loyalty-gold');
+    return tags;
+  }
+
+  // Customers in the ticked tiers (platinum wins if someone somehow has both tags)
+  async function fetchTierCustomers(pw, cfg) {
+    const names = Object.keys(cfg).map(t => t.replace('loyalty-', '')).join(' & ');
+    glog(`Fetching ${names} customers...`, 'info');
+    let customers = [], seen = new Set(), counts = [];
+    for (const tag of ['loyalty-platinum', 'loyalty-gold']) {
+      if (!(tag in cfg)) continue;
+      const list = (await shopifyTagged(pw, tag)).filter(c => !seen.has(c.id));
+      list.forEach(c => seen.add(c.id));
+      customers = customers.concat(list.map(c => ({ ...c, tier: tag })));
+      counts.push(`${list.length} ${tag.replace('loyalty-', '')}`);
+    }
+    glog(`✓ ${counts.join(' · ')}`, 'success');
+    return customers;
+  }
+
   function tierCfg(t) {
     return {
       productId: document.getElementById(t + 'Product').value.trim(),
@@ -1061,10 +1092,10 @@
     const pw = document.getElementById('giftPassword').value.trim();
     const month = document.getElementById('giftMonth').value.trim();
     const tests = document.getElementById('testEmails').value.split(/[,\s]+/).map(e => e.trim().toLowerCase()).filter(Boolean);
-    const cfg = {
-      'loyalty-gold': tierCfg('gold'),
-      'loyalty-platinum': tierCfg('plat'),
-    };
+    const cfg = {};
+    if (document.getElementById('goldOn').checked) cfg['loyalty-gold'] = tierCfg('gold');
+    if (document.getElementById('platOn').checked) cfg['loyalty-platinum'] = tierCfg('plat');
+    if (!Object.keys(cfg).length) { alert('Tick at least one tier (Gold or Platinum).'); return; }
     if (!pw) { alert('Please enter the team password.'); return; }
     if (!/^\d{4}-\d{2}$/.test(month)) { alert('Gift month should look like 2026-10.'); return; }
     for (const [tag, c] of Object.entries(cfg)) {
@@ -1073,7 +1104,7 @@
       if (!(c.qty >= 1 && c.qty <= 24)) { alert(`Check the ${tag.replace('loyalty-', '')} quantity (1–24).`); return; }
     }
     if (giftMode === 'live' && !tests.length) {
-      if (!confirm(`LIVE RUN FOR EVERY gold & platinum customer.\n\nGifts will be added to real Recharge orders. Have you done a dry run and a test-customer run first?`)) return;
+      if (!confirm(`LIVE RUN FOR EVERY ${Object.keys(cfg).map(t => t.replace('loyalty-', '')).join(' & ')} customer.\n\nGifts will be added to real Recharge orders. Have you done a dry run and a test-customer run first?`)) return;
     }
 
     const btn = document.getElementById('giftRunBtn');
@@ -1130,17 +1161,13 @@
       for (const email of tests) {
         const c = await shopifyByEmail(pw, email);
         if (!c) { glog(`✗ ${email}: not found in Shopify`, 'error'); continue; }
-        const tier = (c.tags || '').split(',').map(t => t.trim()).find(t => t in cfg) || 'loyalty-silver';
+        const tier = (c.tags || '').split(',').map(t => t.trim()).find(t => t in cfg);
+        if (!tier) { glog(`– ${email}: not in a tier included this round — skipped`); continue; }
         customers.push({ ...c, tier });
         await sleep(400);
       }
     } else {
-      glog('Fetching gold & platinum customers...', 'info');
-      const plat = await shopifyTagged(pw, 'loyalty-platinum');
-      const platIds = new Set(plat.map(c => c.id));
-      const gold = (await shopifyTagged(pw, 'loyalty-gold')).filter(c => !platIds.has(c.id));
-      customers = plat.map(c => ({ ...c, tier: 'loyalty-platinum' })).concat(gold.map(c => ({ ...c, tier: 'loyalty-gold' })));
-      glog(`✓ ${customers.length} gold & platinum customers`, 'success');
+      customers = await fetchTierCustomers(pw, cfg);
     }
 
     const statusWord = { skipped: 'Order was skipped', error: 'Order failed (payment error)', cancelled: 'Order was cancelled', refunded: 'Order was refunded' };
@@ -1150,7 +1177,7 @@
       const email = (c.email || '').toLowerCase();
       const name = [c.first_name, c.last_name].filter(Boolean).join(' ');
       const tierName = c.tier.replace('loyalty-', '');
-      const g = cfg[c.tier] || cfg['loyalty-gold'];
+      const g = cfg[c.tier];
       document.getElementById('giftProgressBar').style.width = Math.round(((i + 1) / customers.length) * 100) + '%';
       document.getElementById('giftProgressText').textContent = `${i + 1} of ${customers.length} customers checked`;
       const flag = (problem, date = '') => {
@@ -1227,7 +1254,7 @@
     for (const [tag, c] of Object.entries(cfg)) {
       glog(`✓ ${tag === 'loyalty-platinum' ? 'Platinum' : 'Gold'} gift: ${c.productTitle} / ${c.variantTitle} (variant ${c.variant}) × ${c.qty}`, 'success');
     }
-    if (cfg['loyalty-gold'].variant === cfg['loyalty-platinum'].variant) {
+    if (cfg['loyalty-gold'] && cfg['loyalty-platinum'] && cfg['loyalty-gold'].variant === cfg['loyalty-platinum'].variant) {
       glog('! Gold and Platinum have the same variant ID — double-check that\'s intended', 'error');
     }
 
@@ -1239,17 +1266,12 @@
         const c = await shopifyByEmail(pw, email);
         if (!c) { glog(`✗ ${email}: not found in Shopify`, 'error'); continue; }
         const tier = (c.tags || '').split(',').map(t => t.trim()).find(t => t in cfg);
-        if (!tier) { glog(`– ${email}: not tagged gold or platinum — skipped`); continue; }
+        if (!tier) { glog(`– ${email}: not in a tier included this round — skipped`); continue; }
         customers.push({ ...c, tier });
         await sleep(400);
       }
     } else {
-      glog('Fetching gold & platinum customers...', 'info');
-      const plat = await shopifyTagged(pw, 'loyalty-platinum');
-      const platIds = new Set(plat.map(c => c.id));
-      const gold = (await shopifyTagged(pw, 'loyalty-gold')).filter(c => !platIds.has(c.id));
-      customers = plat.map(c => ({ ...c, tier: 'loyalty-platinum' })).concat(gold.map(c => ({ ...c, tier: 'loyalty-gold' })));
-      glog(`✓ ${plat.length} platinum · ${gold.length} gold`, 'success');
+      customers = await fetchTierCustomers(pw, cfg);
     }
 
     const seenSentValues = new Set();
