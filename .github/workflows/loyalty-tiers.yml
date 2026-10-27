@@ -10,6 +10,10 @@ on:
         type: boolean
         default: true
 
+concurrency:
+  group: loyalty-tiers        # never run two tier updates at the same time
+  cancel-in-progress: false
+
 jobs:
   update-tiers:
     runs-on: ubuntu-latest
@@ -33,4 +37,5 @@ jobs:
           SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
           SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+          LOYALTY_TEAM_PASSWORD: ${{ secrets.LOYALTY_TEAM_PASSWORD }}
         run: python loyalty_tiers.py
