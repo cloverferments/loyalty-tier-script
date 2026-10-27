@@ -847,19 +847,26 @@
     btn.disabled = true; status.textContent = 'Loading products...';
     try {
       const out = [];
-      let path = '/products?limit=250';
-      for (let page = 0; path && page < 20; page++) {
-        const { data } = await workerCall(pw, 'recharge', 'GET', path);
-        for (const p of data.products || []) {
-          const pid = idOf(p.external_product_id) || idOf(p.shopify_product_id);
-          if (!pid) continue;
-          const variants = (p.variants || []).map(v => ({
-            id: idOf(v.external_variant_id) || idOf(v.shopify_variant_id),
-            title: v.title || (v.option_values || []).map(o => (o && o.value) || o).join(' / ') || 'Default',
-          })).filter(v => v.id);
-          out.push({ id: pid, title: p.title || `Product ${pid}`, variants });
+      let path = '/admin/api/2026-07/products.json?limit=250&fields=id,title,status,variants';
+      for (let page = 0; path && page < 40; page++) {
+        let res;
+        try {
+          res = await workerCall(pw, 'shopify', 'GET', path);
+        } catch (e) {
+          if (/\(403\)/.test(e.message)) throw new Error('the Shopify app needs the "read_products" permission');
+          throw e;
         }
-        path = data.next_cursor ? `/products?limit=250&cursor=${encodeURIComponent(data.next_cursor)}` : null;
+        for (const p of res.data.products || []) {
+          if (p.status === 'archived') continue;
+          out.push({
+            id: String(p.id),
+            title: p.title + (p.status && p.status !== 'active' ? ` (${p.status})` : ''),
+            variants: (p.variants || []).map(v => ({ id: String(v.id), title: v.title || 'Default' })),
+          });
+        }
+        const link = res.headers.get('Link') || '';
+        const next = link.split(',').find(x => x.includes('rel="next"'));
+        path = next ? (u => u.pathname + u.search)(new URL(next.split(';')[0].trim().replace(/^<|>$/g, ''))) : null;
       }
       // gifts first, then A–Z
       out.sort((a, b) => {
@@ -887,7 +894,7 @@
     const vsel = document.getElementById(t + 'VariantSel');
     if (!p) { vsel.innerHTML = ''; return; }
     document.getElementById(t + 'Product').value = p.id;
-    document.getElementById(t + 'Title').value = p.title;
+    document.getElementById(t + 'Title').value = p.title.replace(/ \((draft|unlisted)\)$/, '');
     if (!p.variants.length) {
       vsel.innerHTML = '<option value="">No variants found — enter the ID below</option>';
       return;
