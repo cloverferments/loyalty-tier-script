@@ -2,12 +2,18 @@ name: Update Loyalty Tiers
 
 on:
   schedule:
-    - cron: '0 20 * * 0'  # Every Sunday 8am NZT (UTC+12 = 20:00 UTC Saturday)
-  workflow_dispatch:       # Also allows manual run from GitHub
+    - cron: '0 16 * * 0'   # Sunday 16:00 UTC = Monday ~5am NZDT (4am NZST), after Sunday's Recharge orders
+  workflow_dispatch:       # "Run workflow" button in GitHub
+    inputs:
+      dry_run:
+        description: 'Test run — report what would change, without changing anything'
+        type: boolean
+        default: true
 
 jobs:
   update-tiers:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
 
     steps:
       - name: Checkout code
@@ -21,9 +27,10 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      - name: Run loyalty tier script
+      - name: Run loyalty tier update
         env:
           SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
           SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
           SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
         run: python loyalty_tiers.py
