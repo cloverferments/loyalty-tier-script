@@ -271,6 +271,18 @@
   .field-row .field { flex: 1; }
   .field-row .field.qty { flex: 0 0 110px; }
   .tier-summary.four { grid-template-columns: repeat(4, 1fr); }
+  .mode-toggle.three { flex-wrap: wrap; }
+  .field select {
+    width: 100%; padding: 12px 14px; border: 1px solid #E8C5CF; border-radius: 4px;
+    font-size: 14px; font-family: 'proxima-nova', sans-serif; background: #fff; color: #1A1A1A;
+  }
+  .products-status { display: block; margin-top: 8px; font-size: 12px; color: #aaa; text-align: center; }
+  .tier-pick { margin-top: 20px; padding: 16px; border: 1px solid #F0E8EC; border-radius: 4px; }
+  .tier-pick .field:first-of-type { margin-top: 12px; }
+  .tier-pick-title { font-size: 12px; letter-spacing: 0.15em; text-transform: uppercase; color: #555; }
+  .manual-ids { margin-top: 16px; font-size: 13px; color: #777; }
+  .manual-ids summary { cursor: pointer; }
+  #giftTab .mode-toggle .mode-btn { min-width: 160px; }
   .tier-summary.four .count { font-size: 24px; }
   .run-btn.secondary { background: #fff; color: #1A1A1A; border: 1px solid #1A1A1A; }
   @media (max-width: 520px) {
@@ -314,37 +326,64 @@
     <div class="card">
       <div class="card-title">Gift details</div>
 
-      <div class="field-row">
+      <div class="field">
+        <label>Team password</label>
+        <input type="password" id="giftPassword" placeholder="Team password" autocomplete="current-password">
+      </div>
+      <button class="run-btn secondary" id="loadProductsBtn" onclick="loadProducts()">Load products</button>
+      <small class="products-status" id="productsStatus">Enter the password, then load your products to pick the gift</small>
+
+      <div class="tier-pick">
+        <div class="tier-pick-title">⭐ Gold gift</div>
         <div class="field">
-          <label>Gift product ID</label>
-          <input id="giftProduct" value="15406933836089">
+          <label>Product</label>
+          <select id="goldProductSel" onchange="productChosen('gold', true)"><option value="">Load products first</option></select>
         </div>
-        <div class="field">
-          <label>Gift name</label>
-          <input id="giftName" value="Loyalty Gift - Cola">
+        <div class="field-row">
+          <div class="field">
+            <label>Variant</label>
+            <select id="goldVariantSel" onchange="variantChosen('gold')"></select>
+          </div>
+          <div class="field qty">
+            <label>Qty</label>
+            <input id="goldQty" type="number" min="1" max="24" value="1">
+          </div>
         </div>
       </div>
-      <small style="display:block;margin:-8px 0 4px;font-size:12px;color:#aaa">The product ID is the number at the end of the product's URL in Shopify admin</small>
-      <div class="field-row">
+
+      <div class="tier-pick">
+        <div class="tier-pick-title">🌿 Platinum gift</div>
         <div class="field">
-          <label>Gold variant ID</label>
-          <input id="goldVariant" value="67712747340089">
+          <label>Product</label>
+          <select id="platProductSel" onchange="productChosen('plat', true)"><option value="">Load products first</option></select>
         </div>
-        <div class="field qty">
-          <label>Gold qty</label>
-          <input id="goldQty" type="number" min="1" max="24" value="1">
+        <div class="field-row">
+          <div class="field">
+            <label>Variant</label>
+            <select id="platVariantSel" onchange="variantChosen('plat')"></select>
+          </div>
+          <div class="field qty">
+            <label>Qty</label>
+            <input id="platQty" type="number" min="1" max="24" value="1">
+          </div>
         </div>
       </div>
-      <div class="field-row">
-        <div class="field">
-          <label>Platinum variant ID</label>
-          <input id="platVariant" value="67712747372857">
+
+      <details class="manual-ids">
+        <summary>Selected IDs (or enter them by hand)</summary>
+        <div class="field-row">
+          <div class="field"><label>Gold product ID</label><input id="goldProduct" value="15406933836089"></div>
+          <div class="field"><label>Gold variant ID</label><input id="goldVariant" value="67712747340089"></div>
         </div>
-        <div class="field qty">
-          <label>Platinum qty</label>
-          <input id="platQty" type="number" min="1" max="24" value="1">
+        <div class="field"><label>Gold gift name</label><input id="goldTitle" value="Loyalty Gift - Cola"></div>
+        <div class="field-row">
+          <div class="field"><label>Platinum product ID</label><input id="platProduct" value="15406933836089"></div>
+          <div class="field"><label>Platinum variant ID</label><input id="platVariant" value="67712747372857"></div>
         </div>
-      </div>
+        <div class="field"><label>Platinum gift name</label><input id="platTitle" value="Loyalty Gift - Cola"></div>
+        <input type="hidden" id="goldVariantTitle" value="Gold">
+        <input type="hidden" id="platVariantTitle" value="Platinum">
+      </details>
 
       <div class="field">
         <label>Gift month</label>
@@ -358,12 +397,7 @@
         <small>Leave empty to include every gold & platinum customer</small>
       </div>
 
-      <div class="field">
-        <label>Team password</label>
-        <input type="password" id="giftPassword" placeholder="Team password" autocomplete="current-password">
-      </div>
-
-      <div class="mode-toggle">
+      <div class="mode-toggle three">
         <div class="mode-btn active" id="giftDry" onclick="setGiftMode('dry')">
           <strong>Dry run</strong>
           <span>Shows what would happen · changes nothing</span>
@@ -371,6 +405,10 @@
         <div class="mode-btn" id="giftLive" onclick="setGiftMode('live')">
           <strong>Live run</strong>
           <span>Adds gifts to Recharge orders</span>
+        </div>
+        <div class="mode-btn" id="giftCheck" onclick="setGiftMode('check')">
+          <strong>Check sent gifts</strong>
+          <span>Finds skipped or missing gifts · changes nothing</span>
         </div>
       </div>
 
@@ -381,9 +419,9 @@
       <div class="card-title">Results</div>
       <div class="tier-summary four">
         <div class="tier-box"><span class="count" id="gAuto">—</span><span class="label" id="gAutoLabel">Added</span></div>
-        <div class="tier-box"><span class="count" id="gManual">—</span><span class="label">Manual list</span></div>
-        <div class="tier-box"><span class="count" id="gHad">—</span><span class="label">Already had it</span></div>
-        <div class="tier-box"><span class="count" id="gSent">—</span><span class="label">Sent this month</span></div>
+        <div class="tier-box"><span class="count" id="gManual">—</span><span class="label" id="gManualLabel">Manual list</span></div>
+        <div class="tier-box"><span class="count" id="gHad">—</span><span class="label" id="gHadLabel">Already had it</span></div>
+        <div class="tier-box"><span class="count" id="gSent">—</span><span class="label" id="gSentLabel">Sent this month</span></div>
       </div>
       <div class="progress-bar-wrap"><div class="progress-bar" id="giftProgressBar"></div></div>
       <div class="progress-text" id="giftProgressText">Starting...</div>
@@ -777,6 +815,7 @@
     if (t === 'gift' && !document.getElementById('giftPassword').value) {
       document.getElementById('giftPassword').value = document.getElementById('tokenInput').value;
     }
+    if (t === 'gift' && !products.length && document.getElementById('giftPassword').value) loadProducts();
   }
 
   // ---------------- Gift dispatch ----------------
@@ -790,11 +829,99 @@
     document.getElementById('giftMonth').value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   })();
 
+  // ---------- Product picker (loads the product list from Recharge) ----------
+  let products = [];
+  const TIER_NAMES = { gold: 'Gold', plat: 'Platinum' };
+
+  function idOf(x) {
+    if (x == null) return '';
+    if (typeof x === 'object') return String(x.ecommerce || x.id || '');
+    return String(x);
+  }
+
+  async function loadProducts() {
+    const pw = document.getElementById('giftPassword').value.trim();
+    const status = document.getElementById('productsStatus');
+    if (!pw) { status.textContent = 'Enter the team password first'; return; }
+    const btn = document.getElementById('loadProductsBtn');
+    btn.disabled = true; status.textContent = 'Loading products...';
+    try {
+      const out = [];
+      let path = '/products?limit=250';
+      for (let page = 0; path && page < 20; page++) {
+        const { data } = await workerCall(pw, 'recharge', 'GET', path);
+        for (const p of data.products || []) {
+          const pid = idOf(p.external_product_id) || idOf(p.shopify_product_id);
+          if (!pid) continue;
+          const variants = (p.variants || []).map(v => ({
+            id: idOf(v.external_variant_id) || idOf(v.shopify_variant_id),
+            title: v.title || (v.option_values || []).map(o => (o && o.value) || o).join(' / ') || 'Default',
+          })).filter(v => v.id);
+          out.push({ id: pid, title: p.title || `Product ${pid}`, variants });
+        }
+        path = data.next_cursor ? `/products?limit=250&cursor=${encodeURIComponent(data.next_cursor)}` : null;
+      }
+      // gifts first, then A–Z
+      out.sort((a, b) => {
+        const ga = /gift/i.test(a.title) ? 0 : 1, gb = /gift/i.test(b.title) ? 0 : 1;
+        return ga - gb || a.title.localeCompare(b.title);
+      });
+      products = out;
+      for (const t of ['gold', 'plat']) {
+        const sel = document.getElementById(t + 'ProductSel');
+        const current = document.getElementById(t + 'Product').value.trim();
+        sel.innerHTML = '<option value="">Choose a product...</option>' +
+          products.map(p => `<option value="${p.id}">${p.title.replace(/</g, '&lt;')}</option>`).join('');
+        if (products.some(p => p.id === current)) { sel.value = current; productChosen(t, false); }
+      }
+      status.textContent = `✓ ${products.length} products loaded`;
+    } catch (e) {
+      status.textContent = `Couldn't load products — ${e.message}. You can still enter IDs by hand below.`;
+    }
+    btn.disabled = false;
+  }
+
+  function productChosen(t, byUser) {
+    const pid = document.getElementById(t + 'ProductSel').value;
+    const p = products.find(x => x.id === pid);
+    const vsel = document.getElementById(t + 'VariantSel');
+    if (!p) { vsel.innerHTML = ''; return; }
+    document.getElementById(t + 'Product').value = p.id;
+    document.getElementById(t + 'Title').value = p.title;
+    if (!p.variants.length) {
+      vsel.innerHTML = '<option value="">No variants found — enter the ID below</option>';
+      return;
+    }
+    vsel.innerHTML = p.variants.map(v => `<option value="${v.id}">${v.title.replace(/</g, '&lt;')}</option>`).join('');
+    const current = document.getElementById(t + 'Variant').value.trim();
+    const match = p.variants.find(v => !byUser && v.id === current)
+      || p.variants.find(v => new RegExp(TIER_NAMES[t], 'i').test(v.title))
+      || p.variants[0];
+    vsel.value = match.id;
+    variantChosen(t);
+    // picking a Gold gift also fills Platinum with the same product, until Platinum is picked separately
+    if (byUser && t === 'gold' && !window.platPicked) {
+      document.getElementById('platProductSel').value = p.id;
+      productChosen('plat', false);
+      const pv = p.variants.find(v => /platinum/i.test(v.title));
+      if (pv) { document.getElementById('platVariantSel').value = pv.id; variantChosen('plat'); }
+    }
+    if (byUser && t === 'plat') window.platPicked = true;
+  }
+
+  function variantChosen(t) {
+    const vsel = document.getElementById(t + 'VariantSel');
+    if (!vsel.value) return;
+    document.getElementById(t + 'Variant').value = vsel.value;
+    document.getElementById(t + 'VariantTitle').value = vsel.options[vsel.selectedIndex].text;
+  }
+
   function setGiftMode(m) {
     giftMode = m;
     document.getElementById('giftDry').classList.toggle('active', m === 'dry');
     document.getElementById('giftLive').classList.toggle('active', m === 'live');
-    document.getElementById('giftRunBtn').textContent = m === 'dry' ? 'Start dry run' : 'Start live run';
+    document.getElementById('giftCheck').classList.toggle('active', m === 'check');
+    document.getElementById('giftRunBtn').textContent = { dry: 'Start dry run', live: 'Start live run', check: 'Check sent gifts' }[m];
   }
 
   function glog(msg, type = '') {
@@ -902,13 +1029,25 @@
   }
 
   function downloadManualList() {
-    const header = ['Name', 'Email', 'Tier', 'Reason', 'Next Recharge order', 'Gift', 'Variant ID', 'Qty'];
+    const header = giftMode === 'check'
+      ? ['Name', 'Email', 'Tier', 'Problem', 'Order date', 'Gift', 'Variant ID', 'Qty']
+      : ['Name', 'Email', 'Tier', 'Reason', 'Next Recharge order', 'Gift', 'Variant ID', 'Qty'];
     const lines = [header.join(',')].concat(manualRows.map(r => header.map(h => csvCell(r[h])).join(',')));
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `loyalty-gift-manual-${document.getElementById('giftMonth').value || 'list'}.csv`;
+    a.download = `loyalty-gift-${giftMode === 'check' ? 'needs-attention' : 'manual'}-${document.getElementById('giftMonth').value || 'list'}.csv`;
     document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  function tierCfg(t) {
+    return {
+      productId: document.getElementById(t + 'Product').value.trim(),
+      variant: document.getElementById(t + 'Variant').value.trim(),
+      productTitle: document.getElementById(t + 'Title').value.trim() || 'Loyalty gift',
+      variantTitle: document.getElementById(t + 'VariantTitle').value.trim() || TIER_NAMES[t],
+      qty: parseInt(document.getElementById(t + 'Qty').value, 10),
+    };
   }
 
   async function startGiftRun() {
@@ -916,13 +1055,14 @@
     const month = document.getElementById('giftMonth').value.trim();
     const tests = document.getElementById('testEmails').value.split(/[,\s]+/).map(e => e.trim().toLowerCase()).filter(Boolean);
     const cfg = {
-      'loyalty-gold': { variant: document.getElementById('goldVariant').value.trim(), qty: parseInt(document.getElementById('goldQty').value, 10) },
-      'loyalty-platinum': { variant: document.getElementById('platVariant').value.trim(), qty: parseInt(document.getElementById('platQty').value, 10) },
+      'loyalty-gold': tierCfg('gold'),
+      'loyalty-platinum': tierCfg('plat'),
     };
     if (!pw) { alert('Please enter the team password.'); return; }
     if (!/^\d{4}-\d{2}$/.test(month)) { alert('Gift month should look like 2026-10.'); return; }
     for (const [tag, c] of Object.entries(cfg)) {
-      if (!/^\d+$/.test(c.variant)) { alert(`Check the ${tag.replace('loyalty-', '')} variant ID — numbers only.`); return; }
+      if (!/^\d+$/.test(c.productId)) { alert(`Choose the ${tag.replace('loyalty-', '')} gift product.`); return; }
+      if (!/^\d+$/.test(c.variant)) { alert(`Choose the ${tag.replace('loyalty-', '')} gift variant.`); return; }
       if (!(c.qty >= 1 && c.qty <= 24)) { alert(`Check the ${tag.replace('loyalty-', '')} quantity (1–24).`); return; }
     }
     if (giftMode === 'live' && !tests.length) {
@@ -934,13 +1074,18 @@
     document.getElementById('giftProgressCard').classList.add('visible');
     document.getElementById('giftLog').innerHTML = '';
     document.getElementById('manualDownload').style.display = 'none';
-    document.getElementById('gAutoLabel').textContent = giftMode === 'dry' ? 'Would add' : 'Added';
+    const labels = giftMode === 'check'
+      ? ['Ordered', 'Still upcoming', 'Needs attention', 'Not sent yet']
+      : [giftMode === 'dry' ? 'Would add' : 'Added', 'Manual list', 'Already had it', 'Sent this month'];
+    ['gAutoLabel', 'gManualLabel', 'gHadLabel', 'gSentLabel'].forEach((id, i) => document.getElementById(id).textContent = labels[i]);
+    document.getElementById('manualDownload').textContent = giftMode === 'check' ? 'Download needs-attention list (CSV)' : 'Download manual list (CSV)';
     ['gAuto', 'gManual', 'gHad', 'gSent'].forEach(id => document.getElementById(id).textContent = '0');
     manualRows = [];
     window.giftRunning = true;
 
     try {
-      await runGift(pw, month, tests, cfg);
+      if (giftMode === 'check') await runCheck(pw, month, tests, cfg);
+      else await runGift(pw, month, tests, cfg);
     } catch (e) {
       glog(`✗ ${e.message}`, 'error');
       document.getElementById('giftProgressText').textContent = `Stopped — ${e.message}`;
@@ -953,6 +1098,106 @@
   window.addEventListener('beforeunload', e => {
     if (window.giftRunning) { e.preventDefault(); e.returnValue = ''; }
   });
+
+  // ---------- Check sent gifts: where did each gift end up? (read-only) ----------
+  async function runCheck(pw, month, tests, cfg) {
+    const counts = { ordered: 0, upcoming: 0, attention: 0, notSent: 0 };
+    const show = () => {
+      document.getElementById('gAuto').textContent = counts.ordered;
+      document.getElementById('gManual').textContent = counts.upcoming;
+      document.getElementById('gHad').textContent = counts.attention;
+      document.getElementById('gSent').textContent = counts.notSent;
+    };
+    glog(`Checking gifts marked as sent for ${month} — nothing will be changed`, 'info');
+    const ping = await fetch(`${WORKER}/ping`, { headers: { 'X-Team-Password': pw } });
+    if (ping.status === 401) throw new Error(await authError(ping));
+    if (!(await ping.json()).recharge) throw new Error('The Recharge key is not set up in Cloudflare yet (RECHARGE_TOKEN)');
+    glog('✓ Connected', 'success');
+
+    const variantIds = new Set(Object.values(cfg).map(c => String(c.variant)));
+    const lineVariant = li => String((li.external_variant_id && (li.external_variant_id.ecommerce || li.external_variant_id)) || li.shopify_variant_id || '');
+
+    let customers = [];
+    if (tests.length) {
+      glog(`Test customers only: ${tests.join(', ')}`, 'info');
+      for (const email of tests) {
+        const c = await shopifyByEmail(pw, email);
+        if (!c) { glog(`✗ ${email}: not found in Shopify`, 'error'); continue; }
+        const tier = (c.tags || '').split(',').map(t => t.trim()).find(t => t in cfg) || 'loyalty-silver';
+        customers.push({ ...c, tier });
+        await sleep(400);
+      }
+    } else {
+      glog('Fetching gold & platinum customers...', 'info');
+      const plat = await shopifyTagged(pw, 'loyalty-platinum');
+      const platIds = new Set(plat.map(c => c.id));
+      const gold = (await shopifyTagged(pw, 'loyalty-gold')).filter(c => !platIds.has(c.id));
+      customers = plat.map(c => ({ ...c, tier: 'loyalty-platinum' })).concat(gold.map(c => ({ ...c, tier: 'loyalty-gold' })));
+      glog(`✓ ${customers.length} gold & platinum customers`, 'success');
+    }
+
+    const statusWord = { skipped: 'Order was skipped', error: 'Order failed (payment error)', cancelled: 'Order was cancelled', refunded: 'Order was refunded' };
+
+    for (let i = 0; i < customers.length; i++) {
+      const c = customers[i];
+      const email = (c.email || '').toLowerCase();
+      const name = [c.first_name, c.last_name].filter(Boolean).join(' ');
+      const tierName = c.tier.replace('loyalty-', '');
+      const g = cfg[c.tier] || cfg['loyalty-gold'];
+      document.getElementById('giftProgressBar').style.width = Math.round(((i + 1) / customers.length) * 100) + '%';
+      document.getElementById('giftProgressText').textContent = `${i + 1} of ${customers.length} customers checked`;
+      const flag = (problem, date = '') => {
+        counts.attention++;
+        manualRows.push({ Name: name, Email: email, Tier: tierName, Problem: problem, 'Order date': date,
+          Gift: `${g.productTitle} / ${g.variantTitle}`, 'Variant ID': g.variant, Qty: g.qty });
+        glog(`⚠ ${email} (${tierName}): ${problem}${date ? ' — ' + date : ''}`, 'error');
+      };
+
+      try {
+        if (!email) { counts.notSent++; show(); continue; }
+        const sent = await giftMonthSent(pw, c.id);
+        if (!sent || sent.value.trim() !== month) { counts.notSent++; show(); continue; }
+
+        // Look through this customer's recent Recharge orders for the gift
+        const { data } = await workerCall(pw, 'recharge', 'GET', `/customers?email=${encodeURIComponent(email)}&limit=5`);
+        let found = null;
+        let onetimeOnly = false;
+        for (const rc of data.customers || []) {
+          const { data: cd } = await workerCall(pw, 'recharge', 'GET', `/charges?customer_id=${rc.id}&sort_by=scheduled_at-desc&limit=25`);
+          for (const ch of cd.charges || []) {
+            if ((ch.line_items || []).some(li => variantIds.has(lineVariant(li)))) {
+              // prefer the most meaningful status if the gift appears on several charges
+              const rank = { success: 5, partially_refunded: 5, queued: 4, pending: 4, skipped: 3, error: 2, refunded: 1, cancelled: 1 };
+              if (!found || (rank[ch.status] || 0) > (rank[found.status] || 0)) found = ch;
+            }
+          }
+          await sleep(250);
+        }
+        if (!found) {
+          // Not on any order — is it still sitting as a one-time item somewhere?
+          for (const rc of data.customers || []) {
+            const { data: ad } = await workerCall(pw, 'recharge', 'GET', `/onetimes?customer_id=${rc.id}&limit=250`);
+            if ((ad.onetimes || []).some(o => variantIds.has(String((o.external_variant_id && (o.external_variant_id.ecommerce || o.external_variant_id)) || '')))) onetimeOnly = true;
+          }
+        }
+
+        const date = found ? String(found.scheduled_at || found.processed_at || '').slice(0, 10) : '';
+        const st = found ? String(found.status || '').toLowerCase() : '';
+        if (st === 'success' || st === 'partially_refunded') counts.ordered++;
+        else if (st === 'queued' || st === 'pending') counts.upcoming++;
+        else if (found) flag(statusWord[st] || `Order status: ${st}`, date);
+        else if (onetimeOnly) flag('Gift is waiting but not attached to any upcoming order');
+        else flag('Gift is missing — removed from the order, or the subscription was cancelled');
+      } catch (e) {
+        if (/rejected|not set up|reach the loyalty server|Wrong team password|Too many/.test(e.message)) throw e;
+        flag(`Couldn't check: ${e.message}`);
+      }
+      show();
+      await sleep(300);
+    }
+    glog(`Done — Ordered: ${counts.ordered} · Still upcoming: ${counts.upcoming} · Needs attention: ${counts.attention} · Not sent yet: ${counts.notSent}`, 'success');
+    document.getElementById('giftProgressText').textContent = `Complete — ${counts.attention} need attention`;
+  }
 
   async function runGift(pw, month, tests, cfg) {
     const live = giftMode === 'live';
@@ -972,15 +1217,8 @@
     if (!pingData.recharge) throw new Error('The Recharge key is not set up in Cloudflare yet (RECHARGE_TOKEN)');
     glog('✓ Connected', 'success');
 
-    // Gift product details (typed in — the Shopify app doesn't need product access)
-    const productId = document.getElementById('giftProduct').value.trim();
-    const productTitle = document.getElementById('giftName').value.trim() || 'Loyalty gift';
-    if (!/^\d+$/.test(productId)) throw new Error('Check the gift product ID — numbers only');
     for (const [tag, c] of Object.entries(cfg)) {
-      c.productId = productId;
-      c.productTitle = productTitle;
-      c.variantTitle = tag === 'loyalty-platinum' ? 'Platinum' : 'Gold';
-      glog(`✓ ${c.variantTitle} gift: ${productTitle} (variant ${c.variant}) × ${c.qty}`, 'success');
+      glog(`✓ ${tag === 'loyalty-platinum' ? 'Platinum' : 'Gold'} gift: ${c.productTitle} / ${c.variantTitle} (variant ${c.variant}) × ${c.qty}`, 'success');
     }
     if (cfg['loyalty-gold'].variant === cfg['loyalty-platinum'].variant) {
       glog('! Gold and Platinum have the same variant ID — double-check that\'s intended', 'error');
