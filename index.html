@@ -354,7 +354,7 @@
           <small>Everyone else (no subscription, or next order after the last order date) goes on a manual list you can download. Run it weekly during the round to catch late orders and re-add gifts from skipped orders.</small>
         </div></div>
         <div class="step"><div class="step-num">3</div><div>
-          <p>Always do a dry run first — it changes nothing</p>
+          <p>Always do a dry run first. It changes nothing</p>
           <small>Then a live run for one or two test emails, then everyone</small>
         </div></div>
       </div>
@@ -437,7 +437,7 @@
         </div>
       </div>
       <div class="round-status" id="roundStatus"></div>
-      <small class="round-help">Keep the same round and last order date for every run in a round. Gifts only go on orders up to the last order date — re-running weekly picks up late subscribers and re-adds gifts from skipped or cancelled orders, without doubling anyone up.</small>
+      <small class="round-help">Keep the same round and last order date for every run in a round. Gifts only go on orders up to the last order date. Re-running weekly picks up late subscribers and re-adds gifts from skipped or cancelled orders, without doubling anyone up.</small>
 
       <div class="field">
         <label>Test customers only (optional)</label>
@@ -493,7 +493,7 @@
       <button class="run-btn secondary" id="tierTestBtn" onclick="startTierRun(true)">Test run</button>
       <button class="run-btn" id="tierRunBtn" onclick="startTierRun(false)">Run tier update</button>
     </div>
-    <p class="tiers-note">Test run shows what would change without changing anything · Silver &lt;$1,000 · Gold $1,000–$1,499 · Platinum $1,500+</p>
+    <p class="tiers-note">Test run shows what would change without changing anything · <br> Silver &lt;$1,000 · Gold $1,000–$1,499 · Platinum $1,500+</p>
 
     <div class="tier-status" id="tierStatus"><span class="muted">Enter the password to see the latest update</span></div>
   </div>
@@ -1005,7 +1005,7 @@
       el.className = 'tier-freshness'; el.innerHTML = '<span class="spinner"></span>A tier update is running now — wait for it to finish before dispatching gifts.'; return;
     }
     const live = (res && !res.dryRun && res.status === 'complete') ? res : (data && data.lastLive) || null;
-    if (!live) { el.className = 'tier-freshness'; el.innerHTML = '<span class="muted">Tip: run a tier update first so gifts go to the right people.</span> <a onclick="showTab(\'tier\')">Update tiers →</a>'; return; }
+    if (!live) { el.className = 'tier-freshness'; el.innerHTML = '<span class="muted">Reminder: run a tier update first so gifts go to the right people.</span> <a onclick="showTab(\'tier\')">Update tiers →</a>'; return; }
     const days = (Date.now() - Date.parse(live.finishedAt)) / 86400000;
     el.className = 'tier-freshness' + (days > 3 ? ' stale' : '');
     el.innerHTML = `Tiers last updated <strong>${esc(fmtWhen(live.finishedAt))}</strong>${days > 3 ? ' — consider updating before dispatching gifts.' : '.'} <a onclick="showTab('tier')">Update tiers →</a>`;
@@ -1193,7 +1193,7 @@
   function showRoundStatus() {
     const el = document.getElementById('roundStatus');
     const st = sharedSettings || localRound();
-    if (!st || !st.round) { el.textContent = sharedAvailable ? 'No gift round saved yet — the first live run saves it for everyone' : ''; return; }
+    if (!st || !st.round) { el.textContent = sharedAvailable ? 'No gift round saved yet. The first live run saves it for everyone' : ''; return; }
     const when = st.updatedAt ? new Date(st.updatedAt).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' }) : '';
     const tiers = [st.platOn !== false ? 'platinum' : null, st.goldOn !== false ? 'gold' : null].filter(Boolean).join(' & ');
     el.textContent = `${sharedAvailable ? 'Current round (shared)' : 'Last round on this computer'}: ${st.round} · orders up to ${st.cutoff || '—'} · ${tiers}${when ? ` · saved ${when}` : ''}`;
