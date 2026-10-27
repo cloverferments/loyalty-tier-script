@@ -285,6 +285,8 @@
   .tier-pick.off .field, .tier-pick.off .field-row { display: none; }
   .tier-pick.off .tier-pick-title::after { content: '— not included this round'; text-transform: none; letter-spacing: 0; color: #aaa; margin-left: 4px; }
   .manual-ids { margin-top: 16px; font-size: 13px; color: #777; }
+  .round-status { margin-top: 8px; font-size: 12px; color: #555; }
+  .round-help { display: block; margin-top: 6px; font-size: 12px; color: #aaa; line-height: 1.5; }
   .manual-ids summary { cursor: pointer; }
   #giftTab .mode-toggle .mode-btn { min-width: 160px; }
   .tier-summary.four .count { font-size: 24px; }
@@ -317,8 +319,8 @@
           <small>Run the tier update first so tags are current. Anyone already marked as sent for this gift month is skipped.</small>
         </div></div>
         <div class="step"><div class="step-num">2</div><div>
-          <p>Subscribers with a Recharge order in the next 4 weeks get the gift added to that order at $0</p>
-          <small>Everyone else (no subscription, or next order more than 4 weeks away) goes on a manual list you can download</small>
+          <p>Subscribers with a Recharge order on or before the round's last order date get the gift added to that order at $0</p>
+          <small>Everyone else (no subscription, or next order after the last order date) goes on a manual list you can download. Run it weekly during the round to catch late orders and re-add gifts from skipped orders.</small>
         </div></div>
         <div class="step"><div class="step-num">3</div><div>
           <p>Always do a dry run first — it changes nothing</p>
@@ -332,7 +334,7 @@
 
       <div class="field">
         <label>Team password</label>
-        <input type="password" id="giftPassword" placeholder="Team password" autocomplete="current-password">
+        <input type="password" id="giftPassword" placeholder="Team password" autocomplete="current-password" onchange="giftPasswordEntered()">
       </div>
       <button class="run-btn secondary" id="loadProductsBtn" onclick="loadProducts()">Load products</button>
       <small class="products-status" id="productsStatus">Enter the password, then load your products to pick the gift</small>
@@ -389,11 +391,18 @@
         <input type="hidden" id="platVariantTitle" value="Platinum">
       </details>
 
-      <div class="field">
-        <label>Gift month</label>
-        <input id="giftMonth" placeholder="2026-10">
-        <small>Saved on each customer once they get the gift, so nobody gets this round twice</small>
+      <div class="field-row">
+        <div class="field">
+          <label>Gift round</label>
+          <input id="giftMonth" placeholder="e.g. 2026-11">
+        </div>
+        <div class="field">
+          <label>Last order date</label>
+          <input id="giftCutoff" type="date">
+        </div>
       </div>
+      <div class="round-status" id="roundStatus"></div>
+      <small class="round-help">Keep the same round and last order date for every run in a round. Gifts only go on orders up to the last order date — re-running weekly picks up late subscribers and re-adds gifts from skipped or cancelled orders, without doubling anyone up.</small>
 
       <div class="field">
         <label>Test customers only (optional)</label>
@@ -424,8 +433,8 @@
       <div class="tier-summary four">
         <div class="tier-box"><span class="count" id="gAuto">—</span><span class="label" id="gAutoLabel">Added</span></div>
         <div class="tier-box"><span class="count" id="gManual">—</span><span class="label" id="gManualLabel">Manual list</span></div>
-        <div class="tier-box"><span class="count" id="gHad">—</span><span class="label" id="gHadLabel">Already had it</span></div>
-        <div class="tier-box"><span class="count" id="gSent">—</span><span class="label" id="gSentLabel">Sent this month</span></div>
+        <div class="tier-box"><span class="count" id="gHad">—</span><span class="label" id="gHadLabel">Already on order</span></div>
+        <div class="tier-box"><span class="count" id="gSent">—</span><span class="label" id="gSentLabel">Gift OK this round</span></div>
       </div>
       <div class="progress-bar-wrap"><div class="progress-bar" id="giftProgressBar"></div></div>
       <div class="progress-text" id="giftProgressText">Starting...</div>
@@ -819,7 +828,7 @@
     if (t === 'gift' && !document.getElementById('giftPassword').value) {
       document.getElementById('giftPassword').value = document.getElementById('tokenInput').value;
     }
-    if (t === 'gift' && !products.length && document.getElementById('giftPassword').value) loadProducts();
+    if (t === 'gift' && document.getElementById('giftPassword').value) giftPasswordEntered();
   }
 
   // ---------------- Gift dispatch ----------------
@@ -828,12 +837,7 @@
   let giftMode = 'dry';
   let manualRows = [];
 
-  (function initMonth() {
-    const d = new Date();
-    document.getElementById('giftMonth').value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  })();
-
-  // ---------- Product picker (loads the product list from Recharge) ----------
+  // ---------- Product picker (loads the product list from Shopify) ----------
   let products = [];
   const TIER_NAMES = { gold: 'Gold', plat: 'Platinum' };
 
@@ -926,6 +930,99 @@
     document.getElementById(t + 'Variant').value = vsel.value;
     document.getElementById(t + 'VariantTitle').value = vsel.options[vsel.selectedIndex].text;
   }
+
+  // ---------- Shared round settings (stored in Cloudflare, so every computer sees the same round) ----------
+  const ROUND_KEY = 'cloverGiftRound';
+  let sharedSettings = null, sharedAvailable = false, sharedLoaded = false;
+  function localRound() { try { return JSON.parse(localStorage.getItem(ROUND_KEY) || 'null'); } catch (e) { return null; } }
+  function saveLocal(st) { try { localStorage.setItem(ROUND_KEY, JSON.stringify(st)); } catch (e) {} }
+
+  function tierSettings(t) {
+    return {
+      product: document.getElementById(t + 'Product').value.trim(),
+      variant: document.getElementById(t + 'Variant').value.trim(),
+      title: document.getElementById(t + 'Title').value.trim(),
+      variantTitle: document.getElementById(t + 'VariantTitle').value.trim(),
+      qty: parseInt(document.getElementById(t + 'Qty').value, 10) || 1,
+    };
+  }
+
+  function currentSettings() {
+    return {
+      round: document.getElementById('giftMonth').value.trim(),
+      cutoff: document.getElementById('giftCutoff').value,
+      goldOn: document.getElementById('goldOn').checked,
+      platOn: document.getElementById('platOn').checked,
+      gold: tierSettings('gold'),
+      plat: tierSettings('plat'),
+    };
+  }
+
+  function applySettings(st) {
+    if (!st) return;
+    if (st.round) document.getElementById('giftMonth').value = st.round;
+    if (st.cutoff) document.getElementById('giftCutoff').value = st.cutoff;
+    for (const t of ['gold', 'plat']) {
+      if (typeof st[t + 'On'] === 'boolean') { document.getElementById(t + 'On').checked = st[t + 'On']; tierToggled(t); }
+      const v = st[t];
+      if (!v) continue;
+      if (v.product) document.getElementById(t + 'Product').value = v.product;
+      if (v.variant) document.getElementById(t + 'Variant').value = v.variant;
+      if (v.title) document.getElementById(t + 'Title').value = v.title;
+      if (v.variantTitle) document.getElementById(t + 'VariantTitle').value = v.variantTitle;
+      if (v.qty) document.getElementById(t + 'Qty').value = v.qty;
+      if (products.length && products.some(p => p.id === v.product)) {
+        document.getElementById(t + 'ProductSel').value = v.product;
+        productChosen(t, false);
+      }
+    }
+  }
+
+  function showRoundStatus() {
+    const el = document.getElementById('roundStatus');
+    const st = sharedSettings || localRound();
+    if (!st || !st.round) { el.textContent = sharedAvailable ? 'No gift round saved yet — the first live run saves it for everyone' : ''; return; }
+    const when = st.updatedAt ? new Date(st.updatedAt).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' }) : '';
+    const tiers = [st.platOn !== false ? 'platinum' : null, st.goldOn !== false ? 'gold' : null].filter(Boolean).join(' & ');
+    el.textContent = `${sharedAvailable ? 'Current round (shared)' : 'Last round on this computer'}: ${st.round} · orders up to ${st.cutoff || '—'} · ${tiers}${when ? ` · saved ${when}` : ''}`;
+  }
+
+  async function fetchShared(pw) {
+    try {
+      const res = await fetch(`${WORKER}/settings`, { headers: { 'X-Team-Password': pw } });
+      if (res.status === 503) { sharedAvailable = false; return null; }
+      if (!res.ok) return null;
+      sharedAvailable = true;
+      return (await res.json()).settings || null;
+    } catch (e) { return null; }
+  }
+
+  async function loadShared(pw) {
+    sharedSettings = await fetchShared(pw);
+    applySettings(sharedSettings || localRound());
+    sharedLoaded = true;
+    showRoundStatus();
+  }
+
+  async function saveShared(pw) {
+    const st = currentSettings();
+    saveLocal(st);
+    if (!sharedAvailable) return;
+    try {
+      const res = await fetch(`${WORKER}/settings`, { method: 'PUT', headers: { 'X-Team-Password': pw, 'Content-Type': 'application/json' }, body: JSON.stringify(st) });
+      if (res.ok) sharedSettings = (await res.json()).settings;
+    } catch (e) {}
+    showRoundStatus();
+  }
+
+  async function giftPasswordEntered() {
+    const pw = document.getElementById('giftPassword').value.trim();
+    if (!pw) return;
+    if (!sharedLoaded) await loadShared(pw);
+    if (!products.length) loadProducts();
+  }
+
+  (function initRound() { applySettings(localRound()); showRoundStatus(); })();
 
   function setGiftMode(m) {
     giftMode = m;
@@ -1020,11 +1117,12 @@
     return best;
   }
 
-  async function chargeHasGift(pw, addressId, variantId) {
+  async function chargeHasGift(pw, addressId, variantId, date) {
     const { data } = await workerCall(pw, 'recharge', 'GET', `/onetimes?address_id=${addressId}&limit=250`);
     return (data.onetimes || []).some(o => {
       const v = o.external_variant_id && (o.external_variant_id.ecommerce || o.external_variant_id);
-      return String(v) === String(variantId);
+      const d = String(o.next_charge_scheduled_at || '').slice(0, 10);
+      return String(v) === String(variantId) && (!date || !d || d === date);
     });
   }
 
@@ -1097,7 +1195,16 @@
     if (document.getElementById('platOn').checked) cfg['loyalty-platinum'] = tierCfg('plat');
     if (!Object.keys(cfg).length) { alert('Tick at least one tier (Gold or Platinum).'); return; }
     if (!pw) { alert('Please enter the team password.'); return; }
-    if (!/^\d{4}-\d{2}$/.test(month)) { alert('Gift month should look like 2026-10.'); return; }
+    if (!/^\d{4}-\d{2}$/.test(month)) { alert('Gift round should be the month, like 2026-11.'); return; }
+    const cutoff = document.getElementById('giftCutoff').value;
+    if (giftMode !== 'check' && !/^\d{4}-\d{2}-\d{2}$/.test(cutoff)) { alert('Set the last order date for this round.'); return; }
+    const prev = (await fetchShared(pw)) || localRound();
+    if (giftMode === 'live' && prev && prev.round && prev.round !== month) {
+      if (!confirm(`This starts a NEW gift round (${month}).\n\nThe current saved round is ${prev.round}. Customers who got the ${prev.round} gift can get another one in ${month}.\n\nContinue?`)) return;
+    }
+    if (giftMode === 'live' && prev && prev.round === month && prev.cutoff && prev.cutoff !== cutoff) {
+      if (!confirm(`The last order date for round ${month} was ${prev.cutoff} — you've changed it to ${cutoff}.\n\nContinue?`)) return;
+    }
     for (const [tag, c] of Object.entries(cfg)) {
       if (!/^\d+$/.test(c.productId)) { alert(`Choose the ${tag.replace('loyalty-', '')} gift product.`); return; }
       if (!/^\d+$/.test(c.variant)) { alert(`Choose the ${tag.replace('loyalty-', '')} gift variant.`); return; }
@@ -1114,7 +1221,7 @@
     document.getElementById('manualDownload').style.display = 'none';
     const labels = giftMode === 'check'
       ? ['Ordered', 'Still upcoming', 'Needs attention', 'Not sent yet']
-      : [giftMode === 'dry' ? 'Would add' : 'Added', 'Manual list', 'Already had it', 'Sent this month'];
+      : [giftMode === 'dry' ? 'Would add' : 'Added', 'Manual list', 'Already on order', 'Gift OK this round'];
     ['gAutoLabel', 'gManualLabel', 'gHadLabel', 'gSentLabel'].forEach((id, i) => document.getElementById(id).textContent = labels[i]);
     document.getElementById('manualDownload').textContent = giftMode === 'check' ? 'Download needs-attention list (CSV)' : 'Download manual list (CSV)';
     ['gAuto', 'gManual', 'gHad', 'gSent'].forEach(id => document.getElementById(id).textContent = '0');
@@ -1122,8 +1229,9 @@
     window.giftRunning = true;
 
     try {
+      if (giftMode === 'live') await saveShared(pw);
       if (giftMode === 'check') await runCheck(pw, month, tests, cfg);
-      else await runGift(pw, month, tests, cfg);
+      else await runGift(pw, month, tests, cfg, cutoff);
     } catch (e) {
       glog(`✗ ${e.message}`, 'error');
       document.getElementById('giftProgressText').textContent = `Stopped — ${e.message}`;
@@ -1233,17 +1341,53 @@
     document.getElementById('giftProgressText').textContent = `Complete — ${counts.attention} need attention`;
   }
 
-  async function runGift(pw, month, tests, cfg) {
+  // ---------- Recharge helpers shared by the gift runs ----------
+  async function rechargeCustomersFor(pw, email) {
+    const { data } = await workerCall(pw, 'recharge', 'GET', `/customers?email=${encodeURIComponent(email)}&limit=5`);
+    return data.customers || [];
+  }
+
+  async function rechargeChargesFor(pw, rcCustomers) {
+    const all = [];
+    for (const rc of rcCustomers) {
+      const { data } = await workerCall(pw, 'recharge', 'GET', `/charges?customer_id=${rc.id}&sort_by=scheduled_at-desc&limit=25`);
+      all.push(...(data.charges || []));
+      await sleep(250);
+    }
+    return all;
+  }
+
+  const chargeDate = ch => String(ch.scheduled_at || ch.processed_at || '').slice(0, 10);
+  const lineVariantId = li => String((li.external_variant_id && (li.external_variant_id.ecommerce || li.external_variant_id)) || li.shopify_variant_id || '');
+  const chargeHasVariant = (ch, variant) => (ch.line_items || []).some(li => lineVariantId(li) === String(variant));
+
+  // Has this customer's gift for the round actually gone through (or is it still on an upcoming order)?
+  function giftState(charges, variant, cutoff) {
+    const since = new Date(new Date(cutoff + 'T00:00:00').getTime() - 120 * 86400000).toISOString().slice(0, 10);
+    const withGift = charges.filter(ch => chargeHasVariant(ch, variant) && chargeDate(ch) >= since);
+    const st = ch => String(ch.status || '').toLowerCase();
+    if (withGift.some(ch => ['success', 'partially_refunded'].includes(st(ch)))) return { ok: true, label: 'ordered' };
+    if (withGift.some(ch => ['queued', 'pending'].includes(st(ch)))) return { ok: true, label: 'on an upcoming order' };
+    const bad = withGift[0];
+    const why = { skipped: 'order was skipped', error: 'order failed', cancelled: 'order was cancelled', refunded: 'order was refunded' };
+    return { ok: false, label: bad ? (why[st(bad)] || `order status ${st(bad)}`) : 'gift was removed or the order was cancelled' };
+  }
+
+  async function runGift(pw, month, tests, cfg, cutoff) {
     const live = giftMode === 'live';
-    const counts = { auto: 0, manual: 0, had: 0, sent: 0, errors: 0 };
+    const counts = { auto: 0, manual: 0, had: 0, sent: 0, errors: 0, readded: 0 };
     const show = () => {
       document.getElementById('gAuto').textContent = counts.auto;
       document.getElementById('gManual').textContent = counts.manual;
       document.getElementById('gHad').textContent = counts.had;
       document.getElementById('gSent').textContent = counts.sent;
     };
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
     glog(live ? 'LIVE RUN — gifts will be added to Recharge orders' : 'Dry run — nothing will be changed', live ? 'error' : 'info');
+    glog(`Gift round ${month} · orders up to ${cutoff}`, 'info');
+    if (cutoff < todayStr) glog('! The last order date has passed — no gifts will be added, this run only reports', 'error');
     glog('Connecting...', 'info');
     const ping = await fetch(`${WORKER}/ping`, { headers: { 'X-Team-Password': pw } });
     if (ping.status === 401) throw new Error(await authError(ping));
@@ -1258,7 +1402,6 @@
       glog('! Gold and Platinum have the same variant ID — double-check that\'s intended', 'error');
     }
 
-    // Who's eligible
     let customers = [];
     if (tests.length) {
       glog(`Test customers only: ${tests.join(', ')}`, 'info');
@@ -1274,15 +1417,13 @@
       customers = await fetchTierCustomers(pw, cfg);
     }
 
-    const seenSentValues = new Set();
     for (let i = 0; i < customers.length; i++) {
       const c = customers[i];
       const email = (c.email || '').toLowerCase();
       const name = [c.first_name, c.last_name].filter(Boolean).join(' ');
       const tierName = c.tier.replace('loyalty-', '');
       const g = cfg[c.tier];
-      const pct = Math.round(((i + 1) / customers.length) * 100);
-      document.getElementById('giftProgressBar').style.width = pct + '%';
+      document.getElementById('giftProgressBar').style.width = Math.round(((i + 1) / customers.length) * 100) + '%';
       document.getElementById('giftProgressText').textContent = `${i + 1} of ${customers.length} customers checked`;
       const manual = (reason, nextDate = '') => {
         counts.manual++;
@@ -1294,25 +1435,39 @@
         if (!email) { manual('No email on Shopify customer'); show(); continue; }
 
         const sent = await giftMonthSent(pw, c.id);
-        if (sent && sent.value) seenSentValues.add(sent.value);
-        if (sent && sent.value.trim() === month) { counts.sent++; show(); continue; }
+        const markedThisRound = !!(sent && sent.value.trim() === month);
+        const rcCustomers = await rechargeCustomersFor(pw, email);
+        const charges = rcCustomers.length ? await rechargeChargesFor(pw, rcCustomers) : [];
 
-        const charge = await nextQueuedCharge(pw, email);
-        if (!charge) { manual('No active subscription'); show(); continue; }
-        const date = String(charge.scheduled_at).slice(0, 10);
-        const days = daysUntil(date);
-        if (days < 0 || days > AUTO_WINDOW_DAYS) { manual(`Next order is ${days} days away`, date); show(); continue; }
+        let redo = '';
+        if (markedThisRound) {
+          const state = giftState(charges, g.variant, cutoff);
+          if (state.ok) { counts.sent++; show(); continue; }
+          redo = state.label;   // gift didn't go through — try to add it again
+        }
 
-        if (await chargeHasGift(pw, charge.address_id, g.variant)) { counts.had++; show(); continue; }
+        const upcoming = charges
+          .filter(ch => ['queued', 'pending'].includes(String(ch.status || '').toLowerCase()) && chargeDate(ch) >= todayStr)
+          .sort((a, b) => chargeDate(a).localeCompare(chargeDate(b)));
+        const next = upcoming[0];
+        if (!next) { manual(redo ? `Gift didn't go through (${redo}) and no upcoming subscription order` : 'No active subscription'); show(); continue; }
+        const date = chargeDate(next);
+        if (date > cutoff) {
+          manual(redo ? `Gift didn't go through (${redo}); next order ${date} is after this round's last order date` : `Next order is after this round's last order date (${cutoff})`, date);
+          show(); continue;
+        }
+
+        if (chargeHasVariant(next, g.variant) || await chargeHasGift(pw, next.address_id, g.variant, date)) { counts.had++; show(); continue; }
 
         if (!live) {
           counts.auto++;
-          glog(`would add → ${email} (${tierName}) on ${date}`);
+          if (redo) counts.readded++;
+          glog(`would ${redo ? 're-add' : 'add'} → ${email} (${tierName}) on ${date}${redo ? ` — previous gift: ${redo}` : ''}`);
           show(); continue;
         }
 
         await workerCall(pw, 'recharge', 'POST', '/onetimes', {
-          address_id: charge.address_id,
+          address_id: next.address_id,
           next_charge_scheduled_at: date,
           external_product_id: { ecommerce: String(g.productId) },
           external_variant_id: { ecommerce: String(g.variant) },
@@ -1322,14 +1477,17 @@
           quantity: g.qty,
         });
         counts.auto++;
-        glog(`✓ added → ${email} (${tierName}) on ${date}`, 'success');
+        if (redo) counts.readded++;
+        glog(`✓ ${redo ? 're-added' : 'added'} → ${email} (${tierName}) on ${date}${redo ? ` — previous gift: ${redo}` : ''}`, 'success');
 
-        try {
-          await workerCall(pw, 'shopify', 'POST', `/admin/api/${API_V}/customers/${c.id}/metafields.json`, {
-            metafield: { namespace: 'custom', key: 'loyalty_gift_month_sent', value: month, type: (sent && sent.type) || 'single_line_text_field' }
-          });
-        } catch (e) {
-          glog(`! ${email}: gift added, but couldn't mark as sent (${e.message})`, 'error');
+        if (!markedThisRound) {
+          try {
+            await workerCall(pw, 'shopify', 'POST', `/admin/api/${API_V}/customers/${c.id}/metafields.json`, {
+              metafield: { namespace: 'custom', key: 'loyalty_gift_month_sent', value: month, type: (sent && sent.type) || 'single_line_text_field' }
+            });
+          } catch (e) {
+            glog(`! ${email}: gift added, but couldn't mark as sent (${e.message})`, 'error');
+          }
         }
       } catch (e) {
         if (/rejected|not set up|reach the loyalty server|Wrong team password|Too many/.test(e.message)) throw e;
@@ -1341,9 +1499,8 @@
       await sleep(300);
     }
 
-    if (seenSentValues.size) glog(`Existing "gift month sent" values seen: ${[...seenSentValues].slice(0, 5).join(', ')}`, 'info');
     const verb = live ? 'Added' : 'Would add';
-    glog(`Done — ${verb}: ${counts.auto} · Manual: ${counts.manual} · Already had it: ${counts.had} · Sent this month: ${counts.sent} · Errors: ${counts.errors}`, 'success');
+    glog(`Done — ${verb}: ${counts.auto}${counts.readded ? ` (${counts.readded} re-added)` : ''} · Manual: ${counts.manual} · Already on order: ${counts.had} · Gift OK this round: ${counts.sent} · Errors: ${counts.errors}`, 'success');
     document.getElementById('giftProgressText').textContent = `Complete — ${verb.toLowerCase()} ${counts.auto}, ${counts.manual} on manual list`;
   }
 </script>
