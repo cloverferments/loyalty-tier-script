@@ -429,7 +429,7 @@
       <div class="field-row">
         <div class="field">
           <label>Gift round</label>
-          <input id="giftMonth" placeholder="e.g. 2026-11">
+          <input id="giftMonth" placeholder="e.g. 2026-11 Cola">
         </div>
         <div class="field">
           <label>Last order date</label>
@@ -965,6 +965,10 @@
       html += `<div class="headline bad">✗ The last tier update ${latest.conclusion === 'cancelled' ? 'was cancelled' : 'failed'} (${esc(fmtWhen(latest.updatedAt))})</div>
         <div class="muted"><a href="${esc(latest.url)}" target="_blank" rel="noopener">See what happened on GitHub</a></div>`;
       tierPendingSince = null;
+    } else if (latest && latest.status === 'completed' && latest.conclusion === 'success' && !resultMatchesRun(data.result, latest) && Date.now() - Date.parse(latest.updatedAt) > 120000) {
+      html += `<div class="headline bad">The last update finished (${esc(fmtWhen(latest.updatedAt))}), but its results didn't reach the dashboard.</div>
+        <div class="muted">Check the LOYALTY_TEAM_PASSWORD secret in GitHub matches the team password. <a href="${esc(latest.url)}" target="_blank" rel="noopener">See the run on GitHub</a></div>`;
+      if (data.result) html += '<hr style="border:none;border-top:1px solid #F0E8EC;margin:12px 0">' + renderResult(data.result, null);
     } else if (data.result) {
       html += renderResult(data.result, latest);
     } else if (!data.setup) {
@@ -1399,23 +1403,26 @@
     };
   }
 
+  const sameRound = (a, b) => String(a || '').trim().replace(/\s+/g, ' ').toLowerCase() === String(b || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
   async function startGiftRun() {
     const pw = document.getElementById('giftPassword').value.trim();
-    const month = document.getElementById('giftMonth').value.trim();
+    const month = document.getElementById('giftMonth').value.trim().replace(/\s+/g, ' ');
+    document.getElementById('giftMonth').value = month;
     const tests = document.getElementById('testEmails').value.split(/[,\s]+/).map(e => e.trim().toLowerCase()).filter(Boolean);
     const cfg = {};
     if (document.getElementById('goldOn').checked) cfg['loyalty-gold'] = tierCfg('gold');
     if (document.getElementById('platOn').checked) cfg['loyalty-platinum'] = tierCfg('plat');
     if (!Object.keys(cfg).length) { alert('Tick at least one tier (Gold or Platinum).'); return; }
     if (!pw) { alert('Please enter the team password.'); return; }
-    if (!/^\d{4}-\d{2}$/.test(month)) { alert('Gift round should be the month, like 2026-11.'); return; }
+    if (!/^\d{4}-\d{2}( .{1,40})?$/.test(month)) { alert('Gift round should start with the month, like 2026-11 or 2026-11 Cola.'); return; }
     const cutoff = document.getElementById('giftCutoff').value;
     if (giftMode !== 'check' && !/^\d{4}-\d{2}-\d{2}$/.test(cutoff)) { alert('Set the last order date for this round.'); return; }
     const prev = (await fetchShared(pw)) || localRound();
-    if (giftMode === 'live' && prev && prev.round && prev.round !== month) {
+    if (giftMode === 'live' && prev && prev.round && !sameRound(prev.round, month)) {
       if (!confirm(`This starts a NEW gift round (${month}).\n\nThe current saved round is ${prev.round}. Customers who got the ${prev.round} gift can get another one in ${month}.\n\nContinue?`)) return;
     }
-    if (giftMode === 'live' && prev && prev.round === month && prev.cutoff && prev.cutoff !== cutoff) {
+    if (giftMode === 'live' && prev && sameRound(prev.round, month) && prev.cutoff && prev.cutoff !== cutoff) {
       if (!confirm(`The last order date for round ${month} was ${prev.cutoff} — you've changed it to ${cutoff}.\n\nContinue?`)) return;
     }
     for (const [tag, c] of Object.entries(cfg)) {
@@ -1511,7 +1518,7 @@
       try {
         if (!email) { counts.notSent++; show(); continue; }
         const sent = await giftMonthSent(pw, c.id);
-        if (!sent || sent.value.trim() !== month) { counts.notSent++; show(); continue; }
+        if (!sent || !sameRound(sent.value, month)) { counts.notSent++; show(); continue; }
 
         // Look through this customer's recent Recharge orders for the gift
         const { data } = await workerCall(pw, 'recharge', 'GET', `/customers?email=${encodeURIComponent(email)}&limit=5`);
@@ -1648,7 +1655,7 @@
         if (!email) { manual('No email on Shopify customer'); show(); continue; }
 
         const sent = await giftMonthSent(pw, c.id);
-        const markedThisRound = !!(sent && sent.value.trim() === month);
+        const markedThisRound = !!(sent && sameRound(sent.value, month));
         const rcCustomers = await rechargeCustomersFor(pw, email);
         const charges = rcCustomers.length ? await rechargeChargesFor(pw, rcCustomers) : [];
 
