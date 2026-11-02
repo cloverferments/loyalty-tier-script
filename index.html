@@ -1130,6 +1130,35 @@
     listsLoading = true;
     document.getElementById('loadListsBtn').disabled = true;
     status.textContent = 'Loading...';
+
+    // Fast path: the lists saved by the last tier update
+    try {
+      const res = await fetch(`${WORKER}/tiers/lists`, { headers: { 'X-Team-Password': pw } });
+      const saved = res.ok ? (await res.json()).lists : null;
+      if (saved && (saved.platinum || saved.gold)) {
+        tierLists = { platinum: saved.platinum || [], gold: saved.gold || [] };
+        document.getElementById('listPlatCount').textContent = tierLists.platinum.length;
+        document.getElementById('listGoldCount').textContent = tierLists.gold.length;
+        document.getElementById('listsSummary').style.display = '';
+        document.getElementById('platListCard').style.display = '';
+        document.getElementById('goldListCard').style.display = '';
+        renderTierList('platinum');
+        renderTierList('gold');
+        status.textContent = '';
+        const head = document.getElementById('listsHead');
+        head.className = 'lists-head';
+        head.textContent = `✓ Tiers updated ${fmtWhen(saved.updatedAt)}`;
+        const sum = rows => rows.reduce((t, c) => t + (c.spend || 0), 0);
+        const avg = rows => rows.length ? money(sum(rows) / rows.length) : '-';
+        document.getElementById('listsMeta').textContent = `Average 12 month spend · platinum ${avg(tierLists.platinum)} · gold ${avg(tierLists.gold)}`;
+        listsLoading = false;
+        document.getElementById('loadListsBtn').disabled = false;
+        document.getElementById('loadListsBtn').style.display = '';
+        return;
+      }
+    } catch (e) {}
+
+    // Slow path (no saved lists yet): look everyone up in Shopify
     try {
       const toRow = c => ({
         id: c.id,
