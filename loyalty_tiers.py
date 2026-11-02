@@ -59,6 +59,7 @@ WINDOW_DAYS = 365
 session = requests.Session()
 summary_lines = []
 RESULT = {"dryRun": DRY_RUN, "trigger": os.environ.get("GITHUB_EVENT_NAME", "manual")}
+TIER_LISTS = None   # gold + platinum lists saved for the dashboard after a live run
 
 
 def log(msg=""):
@@ -233,7 +234,7 @@ def twelve_month_spend():
 def all_customers():
     rows = run_bulk_query(
         """{ customers { edges { node {
-              id email tags
+              id email firstName lastName tags
               points: metafield(namespace: "custom", key: "loyalty_points") { value }
             } } } }""",
         "Customers",
@@ -332,6 +333,20 @@ def main():
         for c, old, new, s in sorted(moves, key=lambda x: -x[3])[:200]:
             summary(f"| {c.get('email') or numeric_id(c['id'])} | {old.replace('loyalty-', '')} | {new.replace('loyalty-', '')} | ${s:,.2f} |")
 
+    global TIER_LISTS
+    TIER_LISTS = {"platinum": [], "gold": []}
+    for c in customers:
+        email = (c.get("email") or "").strip().lower()
+        t = tier_for(spend.get(email, 0.0))
+        if t in ("loyalty-platinum", "loyalty-gold"):
+            TIER_LISTS[t.replace("loyalty-", "")].append({
+                "name": " ".join(x for x in [c.get("firstName"), c.get("lastName")] if x).strip(),
+                "email": email,
+                "spend": int(round(spend.get(email, 0.0))),
+            })
+    for rows in TIER_LISTS.values():
+        rows.sort(key=lambda x: -x["spend"])
+
     if DRY_RUN:
         summary("\nTest run finished — nothing was changed.")
         RESULT["status"] = "complete"
@@ -377,6 +392,15 @@ def report_to_dashboard():
         log(f"Results sent to the dashboard ({r.status_code})")
     except Exception as e:
         log(f"Couldn't send results to the dashboard: {e}")
+    # After a real update, save the gold + platinum lists so the Tier lists screen loads instantly
+    if TIER_LISTS is not None and not DRY_RUN and RESULT.get("status") == "complete":
+        try:
+            body = {"updatedAt": RESULT["finishedAt"], **TIER_LISTS}
+            r = requests.put(f"{DASHBOARD_URL}/tiers/lists", data=json.dumps(body),
+                             headers={"X-Team-Password": DASHBOARD_PASSWORD, "Content-Type": "application/json"}, timeout=30)
+            log(f"Tier lists sent to the dashboard ({r.status_code})")
+        except Exception as e:
+            log(f"Couldn't send tier lists to the dashboard: {e}")
 
 
 if __name__ == "__main__":
