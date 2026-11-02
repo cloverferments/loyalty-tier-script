@@ -267,6 +267,29 @@
     text-transform: uppercase; color: #999; cursor: pointer;
   }
   .tab-btn.active { background: #1A1A1A; color: #fff; border-color: #1A1A1A; }
+  .lists-meta { margin-top: 14px; font-size: 14px; color: #999; line-height: 1.6; }
+  .lists-head { font-size: 16px; color: #2E7D4F; }
+  .lists-head.muted { color: #999; }
+  .tier-summary.big .tier-box { padding: 28px 8px; }
+  .tier-summary.big .count { font-size: 48px; margin-bottom: 8px; }
+  .link-btn { display: block; margin: 14px auto 0; background: none; border: none; color: #999; font-family: 'proxima-nova', sans-serif; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; text-decoration: underline; cursor: pointer; }
+  @media (max-width: 520px) { .tab-btn { font-size: 11px; letter-spacing: 0.04em; padding: 12px 4px; } }
+  .tier-summary.two { grid-template-columns: repeat(2, 1fr); margin-top: 20px; margin-bottom: 0; }
+  .lists-status { margin-top: 10px; font-size: 13px; color: #999; text-align: center; }
+  .list-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .list-head .card-title { flex: 1; }
+  .small-btn {
+    padding: 8px 14px; border: 1px solid #1A1A1A; border-radius: 4px; background: #fff; color: #1A1A1A;
+    font-family: 'proxima-nova', sans-serif; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; white-space: nowrap;
+  }
+  .small-btn:hover { background: #1A1A1A; color: #fff; }
+  .list-table { max-height: 480px; overflow-y: auto; }
+  .list-table table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .list-table th { position: sticky; top: 0; background: #fff; text-align: left; font-weight: normal; color: #999; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; padding: 8px 4px; border-bottom: 1px solid #F0E8EC; }
+  .list-table td { padding: 8px 4px; border-bottom: 1px solid #F7F0F3; vertical-align: top; }
+  .list-table td.num, .list-table th.num { text-align: right; white-space: nowrap; }
+  .list-table td.email { color: #777; word-break: break-all; }
+  @media (max-width: 520px) { .list-table td.email { display: none; } .list-table th.email { display: none; } }
   .field-row { display: flex; gap: 12px; }
   .field-row .field { flex: 1; }
   .field-row .field.qty { flex: 0 0 110px; }
@@ -339,6 +362,7 @@
   <div class="tabs">
     <button class="tab-btn active" id="tabTierBtn" onclick="showTab('tier')">Tier update</button>
     <button class="tab-btn" id="tabGiftBtn" onclick="showTab('gift')">Gift dispatch</button>
+    <button class="tab-btn" id="tabListsBtn" onclick="showTab('lists')">Tier lists</button>
   </div>
 
   <div id="giftTab" style="display:none">
@@ -477,6 +501,42 @@
       <button class="run-btn secondary" id="manualDownload" onclick="downloadManualList()" style="display:none">Download manual list (CSV)</button>
     </div>
   </div>
+
+    <div id="listsTab" style="display:none">
+      <div class="card">
+        <div class="card-title">Tier lists</div>
+        <div class="lists-head" id="listsHead"></div>
+        <div class="lists-status" id="listsStatus"></div>
+
+        <div id="listsSummary" style="display:none">
+          <div class="tier-summary two big">
+            <div class="tier-box"><span class="count" id="listPlatCount">-</span><span class="label">🌿 Platinum</span></div>
+            <div class="tier-box"><span class="count" id="listGoldCount">-</span><span class="label">⭐ Gold</span></div>
+          </div>
+          <div class="lists-meta" id="listsMeta"></div>
+          <div class="field">
+            <input id="listsSearch" placeholder="Search by name or email" oninput="renderTierList('platinum'); renderTierList('gold')">
+          </div>
+        </div>
+        <button class="link-btn" id="loadListsBtn" onclick="loadTierLists()" style="display:none">Reload</button>
+      </div>
+
+      <div class="card tier-list-card" id="platListCard" style="display:none">
+        <div class="list-head">
+          <div class="card-title">🌿 Platinum <span id="platListNum"></span></div>
+          <button class="small-btn" onclick="downloadTierList('platinum')">Download CSV</button>
+        </div>
+        <div class="list-table" id="platList"></div>
+      </div>
+
+      <div class="card tier-list-card" id="goldListCard" style="display:none">
+        <div class="list-head">
+          <div class="card-title">⭐ Gold <span id="goldListNum"></span></div>
+          <button class="small-btn" onclick="downloadTierList('gold')">Download CSV</button>
+        </div>
+        <div class="list-table" id="goldList"></div>
+      </div>
+    </div>
 
   <div id="tierTab">
 
@@ -1020,6 +1080,9 @@
   function showTab(t) {
     document.getElementById('tierTab').style.display = t === 'tier' ? '' : 'none';
     document.getElementById('giftTab').style.display = t === 'gift' ? '' : 'none';
+    document.getElementById('listsTab').style.display = t === 'lists' ? '' : 'none';
+    document.getElementById('tabListsBtn').classList.toggle('active', t === 'lists');
+    if (t === 'lists') openListsTab();
     document.getElementById('tabTierBtn').classList.toggle('active', t === 'tier');
     document.getElementById('tabGiftBtn').classList.toggle('active', t === 'gift');
     if (t === 'gift' && !document.getElementById('giftPassword').value) {
@@ -1027,6 +1090,132 @@
     }
     if (t === 'gift' && document.getElementById('giftPassword').value) { giftPasswordEntered(); refreshTierStatus(); }
     if (t === 'tier' && tierPw()) refreshTierStatus();
+  }
+
+  // ---------------- Tier lists ----------------
+  let tierLists = { platinum: [], gold: [] };
+  let listsLoading = false;
+
+  function openListsTab() {
+    if (!tierPw()) {
+      document.getElementById('listsHead').className = 'lists-head muted';
+      document.getElementById('listsHead').textContent = 'Enter the team password on the Tier update tab first.';
+      return;
+    }
+    if (!tierLists.platinum.length && !tierLists.gold.length && !listsLoading) loadTierLists();
+  }
+
+  const money = n => n == null ? '' : '$' + Number(n).toLocaleString('en-NZ', { maximumFractionDigits: 0 });
+
+  function renderTierList(tier) {
+    const rows = tierLists[tier];
+    const el = document.getElementById(tier === 'platinum' ? 'platList' : 'goldList');
+    document.getElementById(tier === 'platinum' ? 'platListNum' : 'goldListNum').textContent = `(${rows.length})`;
+    if (!rows.length) { el.innerHTML = '<p class="lists-status">Nobody in this tier</p>'; return; }
+    const q = (document.getElementById('listsSearch').value || '').trim().toLowerCase();
+    const shown = q ? rows.filter(c => c.name.toLowerCase().includes(q) || c.email.includes(q)) : rows;
+    if (!shown.length) { el.innerHTML = '<p class="lists-status">No matches</p>'; return; }
+    const sorted = shown.slice().sort((a, b) => (b.spend ?? -1) - (a.spend ?? -1) || a.name.localeCompare(b.name));
+    el.innerHTML = `<table><tr><th>Name</th><th class="email">Email</th><th class="num">Spend</th></tr>
+      ${sorted.map(c => `<tr><td>${esc(c.name || '-')}</td><td class="email">${esc(c.email)}</td><td class="num">${c.spend == null ? '...' : money(c.spend)}</td></tr>`).join('')}
+      </table>`;
+  }
+
+  async function loadTierLists() {
+    const pw = tierPw();
+    const status = document.getElementById('listsStatus');
+    if (!pw) { openListsTab(); return; }
+    document.getElementById('listsHead').textContent = '';
+    if (listsLoading) return;
+    listsLoading = true;
+    document.getElementById('loadListsBtn').disabled = true;
+    status.textContent = 'Loading...';
+    try {
+      const toRow = c => ({
+        id: c.id,
+        name: [c.first_name, c.last_name].filter(Boolean).join(' '),
+        email: (c.email || '').toLowerCase(),
+        spend: null,
+      });
+      const plat = await shopifyTagged(pw, 'loyalty-platinum');
+      const platIds = new Set(plat.map(c => c.id));
+      const gold = (await shopifyTagged(pw, 'loyalty-gold')).filter(c => !platIds.has(c.id));
+      tierLists = { platinum: plat.map(toRow), gold: gold.map(toRow) };
+
+      document.getElementById('listPlatCount').textContent = tierLists.platinum.length;
+      document.getElementById('listGoldCount').textContent = tierLists.gold.length;
+      document.getElementById('listsSummary').style.display = '';
+      document.getElementById('platListCard').style.display = '';
+      document.getElementById('goldListCard').style.display = '';
+      renderTierList('platinum');
+      renderTierList('gold');
+
+      // fill in spend (saved on each customer by the tier update)
+      const all = tierLists.platinum.concat(tierLists.gold);
+      let done = 0;
+      status.textContent = `Loading spend 0 of ${all.length}...`;
+      const queue = all.slice();
+      const worker = async () => {
+        while (queue.length) {
+          const row = queue.shift();
+          try {
+            const { data } = await workerCall(pw, 'shopify', 'GET',
+              `/admin/api/${API_V}/customers/${row.id}/metafields.json?namespace=custom&key=loyalty_points`);
+            const f = (data.metafields || []).find(m => m.key === 'loyalty_points');
+            row.spend = f ? Number(f.value) || 0 : 0;
+          } catch (e) {
+            if (/Wrong team password|reach the loyalty server/.test(e.message)) throw e;
+            row.spend = 0;
+          }
+          done++;
+          if (done % 10 === 0 || done === all.length) {
+            status.textContent = done === all.length ? '' : `Loading spend ${done} of ${all.length}...`;
+            renderTierList('platinum');
+            renderTierList('gold');
+          }
+        }
+      };
+      await Promise.all([worker(), worker()]);
+      const when = new Date().toLocaleString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+      status.textContent = '';
+      showListsMeta(pw, when);
+    } catch (e) {
+      status.textContent = `Couldn't load the lists. ${e.message}`;
+    }
+    listsLoading = false;
+    document.getElementById('loadListsBtn').disabled = false;
+    document.getElementById('loadListsBtn').style.display = '';
+  }
+
+  async function showListsMeta(pw, when) {
+    const el = document.getElementById('listsMeta');
+    const head = document.getElementById('listsHead');
+    const sum = rows => rows.reduce((t, c) => t + (c.spend || 0), 0);
+    const avg = rows => rows.length ? money(sum(rows) / rows.length) : '-';
+    el.textContent = `Average 12 month spend · platinum ${avg(tierLists.platinum)} · gold ${avg(tierLists.gold)} · list loaded ${when}`;
+    head.className = 'lists-head';
+    head.textContent = '';
+    try {
+      const res = await fetch(`${WORKER}/tiers/status`, { headers: { 'X-Team-Password': pw } });
+      const data = await res.json();
+      const live = data.result && !data.result.dryRun && data.result.status === 'complete' ? data.result : data.lastLive;
+      if (live && live.finishedAt) head.textContent = `✓ Tiers updated ${fmtWhen(live.finishedAt)}`;
+    } catch (e) {}
+  }
+
+  function downloadTierList(tier) {
+    const rows = tierLists[tier];
+    if (!rows.length) { alert('Load the lists first.'); return; }
+    if (listsLoading) { alert('Still loading spend. Try again in a moment.'); return; }
+    const sorted = rows.slice().sort((a, b) => (b.spend || 0) - (a.spend || 0));
+    const header = ['Name', 'Email', 'Tier', '12 month spend'];
+    const lines = [header.join(',')].concat(sorted.map(c => [c.name, c.email, tier, c.spend ?? ''].map(csvCell).join(',')));
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const d = new Date();
+    a.download = `${tier}-list-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
   }
 
   // ---------------- Gift dispatch ----------------
