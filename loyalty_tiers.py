@@ -53,6 +53,8 @@ GRAPHQL = f"{REST}/graphql.json"
 PLATINUM = 1500
 GOLD = 1000
 TIER_TAGS = ["loyalty-silver", "loyalty-gold", "loyalty-platinum"]
+# Customers with this tag in Shopify are always platinum, whatever they spend
+ALWAYS_PLATINUM_TAG = "loyalty-always-platinum"
 COUNTED_STATUSES = {"PAID", "PARTIALLY_REFUNDED"}
 WINDOW_DAYS = 365
 
@@ -244,6 +246,10 @@ def all_customers():
 
 # ---------------------------------------------------------------- tiers
 
+def always_platinum(c):
+    return ALWAYS_PLATINUM_TAG in [t.strip().lower() for t in (c.get("tags") or [])]
+
+
 def tier_for(spend):
     if spend >= PLATINUM:
         return "loyalty-platinum"
@@ -307,7 +313,7 @@ def main():
     for c in customers:
         email = (c.get("email") or "").strip().lower()
         s = spend.get(email, 0.0)
-        new_tier = tier_for(s)
+        new_tier = "loyalty-platinum" if always_platinum(c) else tier_for(s)
         counts[new_tier] += 1
         current = [t for t in (c.get("tags") or []) if t in TIER_TAGS]
         if current != [new_tier]:
@@ -321,6 +327,9 @@ def main():
     moves = [x for x in tier_changes if x[1] != "none" or x[2] != "loyalty-silver"]
     summary(f"- Tier changes: **{len(tier_changes)}** ({len(moves)} into or between gold/platinum, the rest new silver tags)")
     summary(f"- Points to update: **{len(points_updates)}**")
+    n_locked = sum(1 for c in customers if always_platinum(c))
+    if n_locked:
+        summary(f"- Always platinum (tagged {ALWAYS_PLATINUM_TAG}): **{n_locked}**")
     RESULT.update(
         counts={"platinum": counts["loyalty-platinum"], "gold": counts["loyalty-gold"], "silver": counts["loyalty-silver"]},
         tierChanges=len(tier_changes), newSilver=len(tier_changes) - len(moves), pointsToUpdate=len(points_updates),
@@ -337,13 +346,17 @@ def main():
     TIER_LISTS = {"platinum": [], "gold": []}
     for c in customers:
         email = (c.get("email") or "").strip().lower()
-        t = tier_for(spend.get(email, 0.0))
+        locked = always_platinum(c)
+        t = "loyalty-platinum" if locked else tier_for(spend.get(email, 0.0))
         if t in ("loyalty-platinum", "loyalty-gold"):
-            TIER_LISTS[t.replace("loyalty-", "")].append({
+            row = {
                 "name": " ".join(x for x in [c.get("firstName"), c.get("lastName")] if x).strip(),
                 "email": email,
                 "spend": int(round(spend.get(email, 0.0))),
-            })
+            }
+            if locked:
+                row["alwaysPlatinum"] = True
+            TIER_LISTS[t.replace("loyalty-", "")].append(row)
     for rows in TIER_LISTS.values():
         rows.sort(key=lambda x: -x["spend"])
 
