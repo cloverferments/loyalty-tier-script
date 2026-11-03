@@ -360,6 +360,23 @@ def main():
     for rows in TIER_LISTS.values():
         rows.sort(key=lambda x: -x["spend"])
 
+    # Share of 12 month sales by tier (customers who ordered in the last 12 months)
+    total_sales = sum(spend.values())
+    plat_sales = sum(x["spend"] for x in TIER_LISTS["platinum"])
+    gold_sales = sum(x["spend"] for x in TIER_LISTS["gold"])
+    plat_active = sum(1 for x in TIER_LISTS["platinum"] if x["spend"] > 0)
+    gold_active = sum(1 for x in TIER_LISTS["gold"] if x["spend"] > 0)
+    TIER_LISTS["sales"] = {
+        "platinum": plat_sales, "gold": gold_sales,
+        "silver": max(0, int(round(total_sales)) - plat_sales - gold_sales),
+        "total": int(round(total_sales)),
+    }
+    TIER_LISTS["activeCustomers"] = {
+        "platinum": plat_active, "gold": gold_active,
+        "silver": max(0, len(spend) - plat_active - gold_active),
+        "total": len(spend),
+    }
+
     if DRY_RUN:
         summary("\nTest run finished — nothing was changed.")
         RESULT["status"] = "complete"
