@@ -267,6 +267,7 @@
     text-transform: uppercase; color: #999; cursor: pointer;
   }
   .tab-btn.active { background: #1A1A1A; color: #fff; border-color: #1A1A1A; }
+  .always-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 3px; background: #F0E8EC; color: #777; font-size: 11px; white-space: nowrap; }
   .lists-meta { margin-top: 14px; font-size: 14px; color: #999; line-height: 1.6; }
   .lists-head { font-size: 16px; color: #2E7D4F; }
   .lists-head.muted { color: #999; }
@@ -896,8 +897,9 @@
       const customer = customers[i];
       const email = (customer.email || '').toLowerCase();
       const spend = customerSpend[email] || 0;
-      const newTier = calculateTier(spend);
       const currentTags = customer.tags || '';
+      const alwaysPlat = currentTags.split(',').map(t => t.trim().toLowerCase()).includes('loyalty-always-platinum');
+      const newTier = alwaysPlat ? 'loyalty-platinum' : calculateTier(spend);
       const currentTierTags = currentTags.split(',').map(t => t.trim()).filter(t => TIER_TAGS.includes(t));
 
       if (newTier === 'loyalty-platinum') platCount++;
@@ -1117,7 +1119,7 @@
     if (!shown.length) { el.innerHTML = '<p class="lists-status">No matches</p>'; return; }
     const sorted = shown.slice().sort((a, b) => (b.spend ?? -1) - (a.spend ?? -1) || a.name.localeCompare(b.name));
     el.innerHTML = `<table><tr><th>Name</th><th class="email">Email</th><th class="num">Spend</th></tr>
-      ${sorted.map(c => `<tr><td>${esc(c.name || '-')}</td><td class="email">${esc(c.email)}</td><td class="num">${c.spend == null ? '...' : money(c.spend)}</td></tr>`).join('')}
+      ${sorted.map(c => `<tr><td>${esc(c.name || '-')}${c.alwaysPlatinum ? ' <span class="always-tag">always platinum</span>' : ''}</td><td class="email">${esc(c.email)}</td><td class="num">${c.spend == null ? '...' : money(c.spend)}</td></tr>`).join('')}
       </table>`;
   }
 
@@ -1165,6 +1167,7 @@
         name: [c.first_name, c.last_name].filter(Boolean).join(' '),
         email: (c.email || '').toLowerCase(),
         spend: null,
+        alwaysPlatinum: (c.tags || '').split(',').map(t => t.trim().toLowerCase()).includes('loyalty-always-platinum'),
       });
       const plat = await shopifyTagged(pw, 'loyalty-platinum');
       const platIds = new Set(plat.map(c => c.id));
@@ -1237,8 +1240,8 @@
     if (!rows.length) { alert('Load the lists first.'); return; }
     if (listsLoading) { alert('Still loading spend. Try again in a moment.'); return; }
     const sorted = rows.slice().sort((a, b) => (b.spend || 0) - (a.spend || 0));
-    const header = ['Name', 'Email', 'Tier', '12 month spend'];
-    const lines = [header.join(',')].concat(sorted.map(c => [c.name, c.email, tier, c.spend ?? ''].map(csvCell).join(',')));
+    const header = ['Name', 'Email', 'Tier', '12 month spend', 'Always platinum'];
+    const lines = [header.join(',')].concat(sorted.map(c => [c.name, c.email, tier, c.spend ?? '', c.alwaysPlatinum ? 'yes' : ''].map(csvCell).join(',')));
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
