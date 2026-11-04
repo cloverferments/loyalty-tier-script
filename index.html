@@ -1991,6 +1991,42 @@
     return all;
   }
 
+  // Load all Recharge orders from the round's time window in a few big pages, instead of
+  // looking up each customer one by one. Returns null if that doesn't work, so the run
+  // falls back to the one by one lookups.
+  async function prefetchCharges(pw, since) {
+    try {
+      const byKey = new Map();
+      let path = `/charges?limit=250&scheduled_at_min=${since}`;
+      let pages = 0;
+      while (path) {
+        const { data } = await workerCall(pw, 'recharge', 'GET', path);
+        for (const ch of data.charges || []) {
+          const cu = ch.customer || {};
+          const ext = cu.external_customer_id && (cu.external_customer_id.ecommerce || cu.external_customer_id);
+          const keys = [];
+          if (cu.email) keys.push('e:' + String(cu.email).toLowerCase());
+          if (ext && typeof ext !== 'object') keys.push('s:' + String(ext));
+          if (!keys.length) return null;
+          for (const k of keys) { if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(ch); }
+        }
+        pages++;
+        if (pages > 40) return null;
+        path = data.next_cursor ? `/charges?limit=250&cursor=${encodeURIComponent(data.next_cursor)}` : null;
+      }
+      return (shopifyId, email) => {
+        const seen = new Set(), out = [];
+        for (const k of ['s:' + shopifyId, 'e:' + email]) {
+          for (const ch of byKey.get(k) || []) { if (!seen.has(ch.id)) { seen.add(ch.id); out.push(ch); } }
+        }
+        return out;
+      };
+    } catch (e) {
+      if (/Wrong team password|not set up/.test(e.message)) throw e;
+      return null;
+    }
+  }
+
   const chargeDate = ch => String(ch.scheduled_at || ch.processed_at || '').slice(0, 10);
   const lineVariantId = li => String((li.external_variant_id && (li.external_variant_id.ecommerce || li.external_variant_id)) || li.shopify_variant_id || '');
   const chargeHasVariant = (ch, variant) => (ch.line_items || []).some(li => lineVariantId(li) === String(variant));
@@ -2065,6 +2101,14 @@
       customers = await fetchTierCustomers(pw, cfg);
     }
 
+    let chargesFor = null;
+    if (!tests.length) {
+      glog('Loading Recharge orders...', 'info');
+      const since = new Date(new Date(cutoff + 'T00:00:00').getTime() - 120 * 86400000).toISOString().slice(0, 10);
+      chargesFor = await prefetchCharges(pw, since < todayStr ? since : todayStr);
+      glog(chargesFor ? '✓ Recharge orders loaded' : 'Checking Recharge one customer at a time', chargesFor ? 'success' : 'info');
+    }
+
     // Check a few customers at the same time to speed things up. Each one runs the steps below.
     let done = 0, fatal = null;
     const checkOne = async (c) => {
@@ -2084,8 +2128,12 @@
 
         const sent = await giftMonthSent(pw, c.id);
         const markedThisRound = !!(sent && sameRound(sent.value, month));
-        const rcCustomers = await rechargeCustomersFor(pw, email);
-        const charges = rcCustomers.length ? await rechargeChargesFor(pw, rcCustomers) : [];
+        let charges;
+        if (chargesFor) charges = chargesFor(c.id, email);
+        else {
+          const rcCustomers = await rechargeCustomersFor(pw, email);
+          charges = rcCustomers.length ? await rechargeChargesFor(pw, rcCustomers) : [];
+        }
 
         let redo = '';
         if (markedThisRound) {
