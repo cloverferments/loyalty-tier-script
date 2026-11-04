@@ -1365,9 +1365,11 @@
   }
 
   // Gifts grouped by the week their order goes out (weeks start on Monday)
+  // Dispatch weeks run Thursday to Wednesday. A week counts as sent after 1pm on the Wednesday.
+  const DISPATCH_DONE_HOUR = 13;
   function weekStart(dateStr) {
     const d = new Date(dateStr + 'T00:00:00');
-    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    d.setDate(d.getDate() - ((d.getDay() + 3) % 7));
     return d;
   }
 
@@ -1375,6 +1377,7 @@
     const valid = entries.filter(e => /^\d{4}-\d{2}-\d{2}$/.test(e.date || ''));
     if (!valid.length) { el.innerHTML = ''; return false; }
     const weeks = {};
+    let sentP = 0, sentG = 0, bookedP = 0, bookedG = 0;
     for (const e of valid) {
       const ws = weekStart(e.date);
       const key = ws.toISOString().slice(0, 10);
@@ -1385,20 +1388,19 @@
     const first = list[0].start;
     const max = Math.max(...list.map(w => w.gold + w.platinum));
     const fmt = d => d.toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' });
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    let sentP = 0, sentG = 0, bookedP = 0, bookedG = 0;
     const rows = list.map(w => {
       const end = new Date(w.start); end.setDate(end.getDate() + 6);
       const num = Math.round((w.start - first) / (7 * 86400000)) + 1;
-      const past = end < today;
-      if (past) { sentP += w.platinum; sentG += w.gold; } else { bookedP += w.platinum; bookedG += w.gold; }
-      const word = past ? 'sent' : 'booked';
       const total = w.gold + w.platinum;
-      const seg = (n, k) => n ? `<div style="width:${(n / max) * 100}%;background:${TIER_COLORS[k]}" title="${n} ${k} ${word}"></div>` : '';
+      const done = new Date(end); done.setHours(DISPATCH_DONE_HOUR, 0, 0, 0);
+      const past = new Date() >= done;
+      if (past) { sentP += w.platinum; sentG += w.gold; } else { bookedP += w.platinum; bookedG += w.gold; }
+      const word = `${total} ${past ? 'sent' : 'booked'}`;
+      const seg = (n, k) => n ? `<div style="width:${(n / max) * 100}%;background:${TIER_COLORS[k]}" title="${n} ${k}"></div>` : '';
       return `<div class="week-row${past ? ' past' : ''}">
         <div class="week-label"><strong>Week ${num}</strong><span>${fmt(w.start)} to ${fmt(end)}</span></div>
         <div class="week-bar">${seg(w.platinum, 'platinum')}${seg(w.gold, 'gold')}</div>
-        <div class="week-nums"><strong>${total} ${word}</strong> · ${w.platinum} platinum · ${w.gold} gold</div>
+        <div class="week-nums"><strong>${word}</strong> · ${w.platinum} platinum · ${w.gold} gold</div>
       </div>`;
     }).join('');
     const parts = [];
@@ -1985,7 +1987,6 @@
     for (const rc of rcCustomers) {
       const { data } = await workerCall(pw, 'recharge', 'GET', `/charges?customer_id=${rc.id}&sort_by=scheduled_at-desc&limit=25`);
       all.push(...(data.charges || []));
-      await sleep(250);
     }
     return all;
   }
@@ -2008,18 +2009,20 @@
     return { ok: false, label: bad ? (why[st(bad)] || `order status ${st(bad)}`) : 'gift was removed or the order was cancelled' };
   }
 
+  const GIFT_LANES = 4;   // how many customers are checked at the same time
   async function runGift(pw, month, tests, cfg, cutoff) {
     const live = giftMode === 'live';
     const counts = { auto: 0, manual: 0, had: 0, sent: 0, errors: 0, readded: 0 };
     const runEntries = [];
     let unsaved = [];
-    const saveLog = async () => {
+    let saving = Promise.resolve();
+    const saveLog = () => (saving = saving.then(async () => {
       if (!live || !unsaved.length) return;
       const batch = unsaved; unsaved = [];
       try {
         await fetch(`${WORKER}/gifts/log`, { method: 'PUT', headers: { 'X-Team-Password': pw, 'Content-Type': 'application/json' }, body: JSON.stringify({ round: month, entries: batch }) });
       } catch (e) { unsaved = batch.concat(unsaved); }
-    };
+    }));
     document.getElementById('giftWeeksResult').innerHTML = '';
     const show = () => {
       document.getElementById('gAuto').textContent = counts.auto;
@@ -2062,14 +2065,14 @@
       customers = await fetchTierCustomers(pw, cfg);
     }
 
-    for (let i = 0; i < customers.length; i++) {
-      const c = customers[i];
+    // Check a few customers at the same time to speed things up. Each one runs the steps below.
+    let done = 0, fatal = null;
+    const checkOne = async (c) => {
+     for (let once = 0; once < 1; once++) {
       const email = (c.email || '').toLowerCase();
       const name = [c.first_name, c.last_name].filter(Boolean).join(' ');
       const tierName = c.tier.replace('loyalty-', '');
       const g = cfg[c.tier];
-      document.getElementById('giftProgressBar').style.width = Math.round(((i + 1) / customers.length) * 100) + '%';
-      document.getElementById('giftProgressText').textContent = `${i + 1} of ${customers.length} customers checked`;
       const manual = (reason, nextDate = '') => {
         counts.manual++;
         manualRows.push({ Name: name, Email: email, Tier: tierName, Reason: reason, 'Next Recharge order': nextDate,
@@ -2154,8 +2157,20 @@
         manual(`Error: ${e.message}`);
       }
       show();
-      await sleep(300);
-    }
+     }
+    };
+    let next = 0;
+    const lane = async () => {
+      while (!fatal && next < customers.length) {
+        const c = customers[next++];
+        try { await checkOne(c); } catch (e) { fatal = fatal || e; }
+        done++;
+        document.getElementById('giftProgressBar').style.width = Math.round((done / customers.length) * 100) + '%';
+        document.getElementById('giftProgressText').textContent = `${done} of ${customers.length} customers checked`;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(GIFT_LANES, customers.length) }, lane));
+    if (fatal) { await saveLog(); throw fatal; }
 
     await saveLog();
     let roundGifts = {};
