@@ -290,6 +290,8 @@
   .week-bar div:last-child { border-radius: 0 4px 4px 0; }
   .week-nums { text-align: right; color: #555; white-space: nowrap; }
   .week-nums strong { font-weight: normal; color: #1A1A1A; }
+  .week-row.past .week-bar { opacity: 0.75; }
+  .weeks-total strong { font-weight: normal; color: #1A1A1A; }
   .weeks-total { margin-top: 14px; padding-top: 12px; border-top: 1px solid #F0E8EC; font-size: 13px; color: #777; }
   #giftWeeksResult { margin-bottom: 16px; }
   #giftWeeksResult .card-title { margin-bottom: 14px; padding-bottom: 0; border: none; }
@@ -1380,22 +1382,31 @@
       weeks[key][e.tier === 'platinum' ? 'platinum' : 'gold']++;
     }
     const list = Object.keys(weeks).sort().map(k => weeks[k]);
+    const first = list[0].start;
     const max = Math.max(...list.map(w => w.gold + w.platinum));
     const fmt = d => d.toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' });
-    const rows = list.map((w, i) => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    let sentP = 0, sentG = 0, bookedP = 0, bookedG = 0;
+    const rows = list.map(w => {
       const end = new Date(w.start); end.setDate(end.getDate() + 6);
+      const num = Math.round((w.start - first) / (7 * 86400000)) + 1;
+      const past = end < today;
+      if (past) { sentP += w.platinum; sentG += w.gold; } else { bookedP += w.platinum; bookedG += w.gold; }
+      const word = past ? 'sent' : 'booked';
       const total = w.gold + w.platinum;
-      const seg = (n, k) => n ? `<div style="width:${(n / max) * 100}%;background:${TIER_COLORS[k]}" title="${n} ${k}"></div>` : '';
-      return `<div class="week-row">
-        <div class="week-label"><strong>Week ${i + 1}</strong><span>${fmt(w.start)} to ${fmt(end)}</span></div>
-        <div class="week-bar">${seg(w.gold, 'gold')}${seg(w.platinum, 'platinum')}</div>
-        <div class="week-nums"><strong>${total}</strong> · ${w.gold} gold · ${w.platinum} platinum</div>
+      const seg = (n, k) => n ? `<div style="width:${(n / max) * 100}%;background:${TIER_COLORS[k]}" title="${n} ${k} ${word}"></div>` : '';
+      return `<div class="week-row${past ? ' past' : ''}">
+        <div class="week-label"><strong>Week ${num}</strong><span>${fmt(w.start)} to ${fmt(end)}</span></div>
+        <div class="week-bar">${seg(w.platinum, 'platinum')}${seg(w.gold, 'gold')}</div>
+        <div class="week-nums"><strong>${total} ${word}</strong> · ${w.platinum} platinum · ${w.gold} gold</div>
       </div>`;
     }).join('');
-    const g = valid.filter(e => e.tier !== 'platinum').length, p = valid.length - g;
-    el.innerHTML = `${title ? `<div class="card-title">${esc(title)}</div>` : ''}${legendHtml(['gold', 'platinum'])}
+    const parts = [];
+    if (sentP + sentG) parts.push(`${sentP + sentG} sent (${sentP} platinum, ${sentG} gold)`);
+    if (bookedP + bookedG) parts.push(`${bookedP + bookedG} booked (${bookedP} platinum, ${bookedG} gold)`);
+    el.innerHTML = `${title ? `<div class="card-title">${esc(title)}</div>` : ''}${legendHtml(['platinum', 'gold'])}
       <div class="week-rows">${rows}</div>
-      <div class="weeks-total">${valid.length} gifts in total · ${g} gold · ${p} platinum</div>`;
+      <div class="weeks-total"><strong>${valid.length} gifts this round</strong> · ${parts.join(' · ')}</div>`;
     return true;
   }
 
@@ -1576,8 +1587,9 @@
 
   function applySettings(st) {
     if (!st) return;
-    if (st.round) document.getElementById('giftMonth').value = st.round;
-    if (st.cutoff) document.getElementById('giftCutoff').value = st.cutoff;
+    // don't overwrite what someone has already typed
+    if (st.round && !document.getElementById('giftMonth').value.trim()) document.getElementById('giftMonth').value = st.round;
+    if (st.cutoff && !document.getElementById('giftCutoff').value) document.getElementById('giftCutoff').value = st.cutoff;
     for (const t of ['gold', 'plat']) {
       if (typeof st[t + 'On'] === 'boolean') { document.getElementById(t + 'On').checked = st[t + 'On']; tierToggled(t); }
       const v = st[t];
@@ -1987,8 +1999,10 @@
     const since = new Date(new Date(cutoff + 'T00:00:00').getTime() - 120 * 86400000).toISOString().slice(0, 10);
     const withGift = charges.filter(ch => chargeHasVariant(ch, variant) && chargeDate(ch) >= since);
     const st = ch => String(ch.status || '').toLowerCase();
-    if (withGift.some(ch => ['success', 'partially_refunded'].includes(st(ch)))) return { ok: true, label: 'ordered' };
-    if (withGift.some(ch => ['queued', 'pending'].includes(st(ch)))) return { ok: true, label: 'on an upcoming order' };
+    const sent = withGift.find(ch => ['success', 'partially_refunded'].includes(st(ch)));
+    if (sent) return { ok: true, label: 'ordered', date: chargeDate(sent) };
+    const booked = withGift.find(ch => ['queued', 'pending'].includes(st(ch)));
+    if (booked) return { ok: true, label: 'on an upcoming order', date: chargeDate(booked) };
     const bad = withGift[0];
     const why = { skipped: 'order was skipped', error: 'order failed', cancelled: 'order was cancelled', refunded: 'order was refunded' };
     return { ok: false, label: bad ? (why[st(bad)] || `order status ${st(bad)}`) : 'gift was removed or the order was cancelled' };
@@ -2073,7 +2087,11 @@
         let redo = '';
         if (markedThisRound) {
           const state = giftState(charges, g.variant, cutoff);
-          if (state.ok) { counts.sent++; show(); continue; }
+          if (state.ok) {
+            counts.sent++;
+            if (state.date) { runEntries.push({ email, tier: tierName, date: state.date }); if (live) unsaved.push({ email, tier: tierName, date: state.date }); }
+            show(); continue;
+          }
           redo = state.label;   // gift didn't go through — try to add it again
         }
 
@@ -2088,7 +2106,12 @@
           show(); continue;
         }
 
-        if (chargeHasVariant(next, g.variant) || await chargeHasGift(pw, next.address_id, g.variant, date)) { counts.had++; show(); continue; }
+        if (chargeHasVariant(next, g.variant) || await chargeHasGift(pw, next.address_id, g.variant, date)) {
+          counts.had++;
+          runEntries.push({ email, tier: tierName, date });
+          if (live) unsaved.push({ email, tier: tierName, date });
+          show(); continue;
+        }
 
         if (!live) {
           counts.auto++;
@@ -2135,7 +2158,14 @@
     }
 
     await saveLog();
-    renderGiftWeeks(document.getElementById('giftWeeksResult'), runEntries, live ? 'Added this run, by week' : 'Would add, by week');
+    let roundGifts = {};
+    try {
+      const res = await fetch(`${WORKER}/gifts/log?round=${encodeURIComponent(month)}`, { headers: { 'X-Team-Password': pw } });
+      if (res.ok) roundGifts = (await res.json()).gifts || {};
+    } catch (e) {}
+    for (const e of runEntries) roundGifts[e.email] = e;
+    renderGiftWeeks(document.getElementById('giftWeeksResult'), Object.values(roundGifts),
+      live ? 'This round by week' : 'This round by week, if you run it live');
     if (live) loadGiftOverview();
     const verb = live ? 'Added' : 'Would add';
     glog(`Done — ${verb}: ${counts.auto}${counts.readded ? ` (${counts.readded} re-added)` : ''} · Manual: ${counts.manual} · Already on order: ${counts.had} · Gift OK this round: ${counts.sent} · Errors: ${counts.errors}`, 'success');
